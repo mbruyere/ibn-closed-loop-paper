@@ -10,6 +10,7 @@
 \usepackage{graphicx}
 \usepackage{tikz}
 \usepackage{enumitem}
+\usepackage{tabularx}
 \usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit,calc}
 
 \lstset{
@@ -734,13 +735,13 @@ carries exactly one \emph{primary} layer label (e.g.\
 \texttt{Device}, \texttt{Intent}, \texttt{MigrationPlan}) and may
 carry additional tag labels (e.g.\ \texttt{:Active}, \texttt{:POR}).
 
-\begin{table}[t]
+\begin{table*}[t]
 \small
 \centering
 \caption{Nine-layer ontology: one canonical label set per layer, with the
 agent(s) that write to each layer.}
 \label{tab:layers}
-\begin{tabular}{@{}lllp{3cm}@{}}
+\begin{tabularx}{\textwidth}{@{}l l X l@{}}
 \toprule
 \textbf{Layer} & \textbf{Name} & \textbf{Representative labels} & \textbf{Writers}\\
 \midrule
@@ -781,8 +782,8 @@ L9 & People/Process &
   \texttt{SLA}, \texttt{AgentExecution} &
   All agents\\
 \bottomrule
-\end{tabular}
-\end{table}
+\end{tabularx}
+\end{table*}
 
 The layering is strictly semantic, not a storage partition: Neo4j
 holds all labels in a single graph so that queries can traverse
