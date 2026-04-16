@@ -1,0 +1,1681 @@
+%% ACM journal template — acmtog (single-column, no page limit).
+%% Build: latexmk -pdf main.tex     (requires acmart.cls in TEXMF or same dir)
+
+\documentclass[acmtog]{acmart}
+
+%% --------- packages ---------
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{tikz}
+\usepackage{enumitem}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit,calc}
+
+\lstset{
+  basicstyle=\small\ttfamily,
+  breaklines=true,
+  frame=single,
+  xleftmargin=1em,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+}
+
+%% --------- suppress ACM-specific fields (pre-submission draft) ---------
+\setcopyright{none}
+\settopmatter{printacmref=false}
+\renewcommand\footnotetextcopyrightpermission[1]{}
+\acmConference[IBN-CL '26]{Workshop on Intent-Based Networking and
+  Closed-Loop Control}{2026}{TBD}
+\acmYear{2026}
+\copyrightyear{2026}
+\acmDOI{}
+\acmISBN{}
+\acmPrice{}
+
+\title{HLD-as-Source-of-Intent: A Ten-Agent Closed-Loop System for
+  Intent-Based Networking Grounded in RFC~9315}
+
+\author{Marc Bruy\`ere-Yamada}
+\affiliation{%
+  \institution{IBN Lab}
+  \country{}
+}
+\email{marc@bruyere-yamada.name}
+
+\author{Anonymous Co-authors}
+\affiliation{%
+  \institution{TBD}
+  \country{}
+}
+
+\begin{abstract}
+We present an Intent-Based Networking (IBN) closed-loop control system
+in which the operator's High-Level Design (HLD) document, stored as
+Markdown under version control, is the sole source of intent.
+A~\texttt{git commit} on the HLD is the only external trigger: the
+system reconciles live network state to the committed design through a
+pipeline of ten specialised agents mapped to the stages defined in
+RFC~9315, backed by a Neo4j graph Single Source of Truth (SSoT) with
+nine ontology layers and five concurrent model states (What-If,
+Candidate, Plan-of-Record, Deployed, As-Built). A three-tier memory
+architecture separates structured state (Neo4j), working memory
+(Live-Memory, MCP-attached), and long-term knowledge (Graph-Memory with
+BGE-M3 vector embeddings and ontology-guided entity extraction).
+
+We describe the two-loop control decomposition (autonomous inner loop,
+human-in-the-loop outer loop), the nine-layer knowledge graph ontology
+with its six cross-layer relationship types, the ten agents with their
+precise inputs, outputs, dispatch tables, and write-layer assignments,
+and the three-tier memory with its LLM-driven consolidation pipeline.
+We report an end-to-end implementation covering multi-vendor rendering
+across VyOS, Nokia SR~Linux, and FRRouting, shipped through six
+incremental ``slices'' on a live Containerlab testbed with 16 nodes on a
+12\,GB ARM64 host. Configuration is pushed through both
+CLI-over-\texttt{docker exec} and schema-validated gNMI paths, with the
+same A3-rendered intent artefact feeding either transport. The core
+pipeline is deterministic and LLM-free; large language models are used
+exclusively for memory consolidation and knowledge extraction, keeping
+the fulfilment path's cycle time under 10\,seconds and its correctness
+properties non-probabilistic.
+\end{abstract}
+
+\keywords{intent-based networking, RFC 9315, closed-loop control,
+  GitOps, knowledge graphs, multi-agent systems, gNMI, YANG,
+  network automation, Neo4j}
+
+\begin{document}
+\maketitle
+
+%% ===================================================================
+\section{Introduction}\label{sec:intro}
+%% ===================================================================
+
+\subsection{The HLD--Production Gap}
+
+Modern enterprise and campus networks continue to be operated through
+an uncomfortable split: architects produce dense High-Level Design
+(HLD) documents that capture the \emph{intent} of the network---its
+sites, zones, VLAN plans, firewall policies, routing design---while
+operators, at a much later stage, translate those documents by hand
+into device-specific configuration. The HLD is authoritative on paper
+but inert in production: it does not execute, it does not verify
+itself against the live topology, and it inevitably drifts from the
+devices it is meant to describe.
+
+This split has several well-documented consequences. First, the HLD
+becomes a stale artefact within weeks of initial deployment: operators
+make out-of-band changes to address urgent issues, and the document
+is never backfilled. Second, the translation from HLD to device
+configuration is manual, error-prone, and vendor-specific; an
+architect's VLAN plan expressed in a prose table must be separately
+re-encoded as VyOS \texttt{set} commands, Nokia SR~Linux \texttt{set /}
+statements, or FRR \texttt{vtysh} directives. Third, the
+\emph{rationale} for a design choice---captured naturally in prose and
+margin notes in the HLD---is lost the moment the intent is translated
+into a structured policy form. When a firewall rule is later found to
+be overly permissive, the operator who must decide whether to narrow
+it has no machine-accessible record of \emph{why} the rule was
+written that way.
+
+\subsection{Intent-Based Networking and RFC~9315}
+
+Closing this gap is the central premise of Intent-Based Networking
+(IBN), formalised by the IETF in RFC~9315~\cite{rfc9315}. The RFC
+defines intent as an abstract, high-level policy that the network
+infrastructure itself is responsible for rendering, deploying, and
+continuously verifying through two nested feedback loops. The
+\emph{fulfilment} phase ingests intent, decomposes it into
+vendor-specific configuration, and orchestrates its deployment. The
+\emph{assurance} phase monitors the deployed state, assesses
+compliance against the intent-derived Plan-of-Record, and either
+auto-remediates or escalates to a human operator. RFC~9315 further
+distinguishes the \emph{inner loop} (autonomous, machine-to-machine,
+seconds-to-minutes cadence) from the \emph{outer loop}
+(human-in-the-loop, minutes-to-days cadence).
+
+Despite a decade of vendor activity around IBN---Cisco DNA Center,
+Juniper Apstra, Arista CloudVision, Nokia NSP---most deployed systems
+remain tightly coupled to a single vendor's management plane and
+treat intent as a GUI-authored artefact inside a controller. Operators
+end up writing intent twice: once in the HLD (for humans) and once in
+the controller (for machines). The two representations drift, and the
+controller's intent model is a proprietary abstraction that cannot be
+diffed, branched, or code-reviewed with standard development tooling.
+
+\subsection{Contribution: HLD-as-Intent}
+
+This paper describes a research prototype, developed on an open
+Containerlab testbed~\cite{containerlab}, that treats the HLD Markdown
+document itself as the source of intent. A~\texttt{git commit} on the
+HLD is the only external trigger the system accepts: everything
+downstream---parsing the change, updating the graph-structured Single
+Source of Truth (SSoT), decomposing intent into policy, rendering
+vendor-specific configuration, planning the migration with blast-radius
+analysis, pushing to the devices, and verifying the outcome against the
+committed design---is carried out autonomously by a pipeline of ten
+specialised agents whose roles map directly onto the stages of the
+RFC~9315 control loop. Architects edit the document they already know
+how to write; the loop handles the rest.
+
+The contributions of this paper are fivefold:
+
+\begin{enumerate}[label=\textbf{C\arabic*.}]
+  \item \textbf{HLD-as-Intent.} We demonstrate that a conventional
+    Markdown HLD, augmented only with a structured Device Inventory
+    Table and a VLAN assignment table, is sufficient to drive a full
+    IBN fulfilment-and-assurance loop end-to-end, with \texttt{git}
+    providing provenance, diffing, branching, and human review for
+    free. The HLD is not a wrapper around a proprietary intent
+    model; it \emph{is} the intent, and the system parses it
+    directly using a 584-line Markdown parser with no LLM in the
+    parsing path.
+
+  \item \textbf{A ten-agent decomposition grounded in RFC~9315.} We
+    map the abstract stages of RFC~9315~\S5 onto ten concrete agents
+    (A1--A10) with narrow, testable responsibilities. Each agent
+    writes to a well-defined subset of a nine-layer graph ontology
+    (3,969~lines of Python across the ten agents), each emits
+    structured working-memory notes that can be consolidated into
+    long-term knowledge, and each publishes typed events to a Redis
+    Streams event bus. The decomposition is fine-grained enough that
+    adding a new vendor requires exactly one line per dispatch table
+    plus a Jinja2 template chain---no agent code changes.
+
+  \item \textbf{A nine-layer knowledge-graph ontology.} The Neo4j
+    SSoT organises network state across nine layers
+    (L1~Infrastructure through L9~People/Process) connected by six
+    typed cross-layer relationships (\texttt{REALIZED\_BY},
+    \texttt{ABSTRACTS}, \texttt{AGGREGATES}, \texttt{CONTAINS},
+    \texttt{TRAVERSES}, \texttt{PRECEDED\_BY}). Five concurrent model
+    states (\texttt{WHAT\_IF}, \texttt{CANDIDATE}, \texttt{POR},
+    \texttt{DEPLOYED}, \texttt{AS\_BUILT}) co-exist as overlapping
+    subgraphs, enforced by a controller with eight legal transition
+    edges and four rollback paths. The ontology is codified in 616
+    lines of Cypher DDL with profile-based constraint bundles.
+
+  \item \textbf{A three-tier memory architecture.} Beyond the Neo4j
+    SSoT (Tier~1: \emph{what is}) we layer a Live-Memory tier
+    (Tier~2: \emph{why it is so}---working memory for agent
+    reasoning, exposed via MCP Streamable HTTP) and a Graph-Memory
+    tier (Tier~3: \emph{what was learned}---long-term knowledge graph
+    with BGE-M3 1024-dimension embeddings in Qdrant, ontology-guided
+    entity extraction across 14 entity classes and 8 relationship
+    types). The three tiers are decoupled: the pipeline writes only
+    to Tiers~1 and~2; consolidation from Tier~2 to Tier~3 runs
+    asynchronously and is the only point where an LLM is invoked.
+
+  \item \textbf{An incrementally shipped multi-vendor implementation.}
+    We report on six ``slices'' of shipped functionality, culminating
+    in a schema-validated gNMI push path for Nokia SR~Linux running
+    side-by-side with CLI-over-\texttt{docker-exec} paths for VyOS
+    and FRRouting~\cite{frr}. The testbed runs 16 Containerlab nodes
+    (3~SR~Linux, 2~FRR, 4~VyOS, 7~host stubs) on a single 12\,GB
+    ARM64 host with a full-cycle time of 8--10\,s. The implementation
+    totals 140 unit tests across 23 test suites with zero regressions
+    across slices.
+\end{enumerate}
+
+\subsection{Paper Organisation}
+
+The remainder of this paper is organised as follows.
+Section~\ref{sec:cl} describes the closed-loop architecture and its
+grounding in RFC~9315, including the trigger-to-push pipeline, the
+approval gate, and the invariants that make the system introspectable.
+Section~\ref{sec:ssot} describes the Neo4j nine-layer ontology, the six
+cross-layer relationship types, the five concurrent model states, and
+the profile-based schema governance.
+Section~\ref{sec:agents} details each of the ten agents, covering their
+inputs, outputs, Neo4j write targets, dispatch tables, and key design
+decisions.
+Section~\ref{sec:memory} covers the three-tier memory architecture,
+the consolidation pipeline, the IBN Lifecycle Ontology, and the
+graph-guided RAG query path.
+Section~\ref{sec:impl} reports on the incremental implementation across
+six slices, the testbed configuration, measurements, and failure modes
+encountered and resolved.
+Section~\ref{sec:discuss} discusses related work and lessons learned.
+Section~\ref{sec:conclusion} concludes.
+
+
+%% ===================================================================
+\section{The Closed Loop}\label{sec:cl}
+%% ===================================================================
+
+\subsection{Grounding in RFC~9315}\label{sec:cl:rfc}
+
+RFC~9315~\cite{rfc9315} decomposes an IBN system into two nested
+feedback loops. The \emph{inner loop} is autonomous: it runs on the
+order of seconds to minutes, compares the network's observed
+operational state against the intent-derived Plan-of-Record, detects
+drift, classifies severity, and either self-corrects (re-render,
+re-push) or escalates. The \emph{outer loop} is on human timescales:
+operators review reports, amend the intent, and re-submit; the system
+adapts accordingly. RFC~9315 further partitions the work into
+\emph{fulfilment} (\S5.1: intent ingestion, policy translation, config
+rendering, orchestration) and \emph{assurance} (\S5.2: monitoring,
+assessment, remediation, abstraction, reporting).
+
+Our system retains this two-loop, two-phase decomposition verbatim.
+Table~\ref{tab:rfc-mapping} shows the mapping between RFC~9315
+subsections and our ten agents. Beyond the standard decomposition, we
+make three additional architectural commitments:
+
+\begin{table}[t]
+\small
+\centering
+\caption{Mapping of RFC~9315 stages to the ten agents.}
+\label{tab:rfc-mapping}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{RFC~9315} & \textbf{Phase} & \textbf{Agent} & \textbf{Name}\\
+\midrule
+\S5.1.1 & Fulfilment & A1 & Ingestion\\
+\S5.1.2 & Fulfilment & A2 & Intent$\rightarrow$Policy\\
+\S5.1.2 & Fulfilment & A3 & Policy$\rightarrow$Config\\
+\S5.1.2 & Fulfilment & A4 & Planning\\
+\S5.1.3 & Fulfilment & A5 & Orchestration\\
+\S5.2.1 & Assurance  & A6 & Monitoring\\
+\S5.2.2 & Assurance  & A7 & Assessment\\
+\S5.2.3 & Assurance  & A8 & Action\\
+\S5.2   & Assurance  & A9 & Abstraction\\
+\S5.2   & Assurance  & A10 & Reporting\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{enumerate}[label=\textbf{AC\arabic*.}]
+  \item \textbf{A single external trigger.} The only event that
+    enters the system from outside is \texttt{git commit} on the HLD
+    repository. A \texttt{post-commit} hook invokes the pipeline entry
+    point \texttt{HldCommitPipeline.run(commit, hld\_path)}, which is
+    the sole supported way to start a fulfilment cycle. The hook
+    runs the pipeline in a background process, emits a banner to the
+    terminal (\texttt{[ibn-hook] HLD changed in <sha>}), and deposits
+    a pending-approval marker when the approval gate fires. Everything
+    else is internal. There is no GUI, no REST API, no controller; the
+    intent surface is the text editor and the \texttt{git} CLI.
+
+  \item \textbf{A single human checkpoint.} The inner loop is
+    autonomous by design, but change-of-intent operations (new
+    devices, decommissions, policy scope changes) are gated by an
+    explicit approval step between Agent~4 (Planning) and Agent~5
+    (Orchestration). The approval artefact is a Markdown file
+    deposited under \texttt{.git/ibn-pending-approval/<sha>.md}
+    containing the severity classification, blast radius, affected
+    devices, and a forward/inverse summary of the planned change. An
+    operator approves by running \texttt{python -m ibn.tools.approve
+    <sha>} or rejects with \texttt{python -m ibn.tools.approve reject
+    <sha> --reason "..."}. This preserves RFC~9315's outer-loop human
+    oversight but removes the GUI-controller dependency.
+
+  \item \textbf{Deterministic pipeline, LLM-assisted memory.} The
+    core pipeline (A1$\rightarrow$A5 fulfilment, A6$\rightarrow$A8
+    assurance) is entirely LLM-free. LLMs enter the architecture
+    exclusively at the memory consolidation and knowledge extraction
+    boundary (Section~\ref{sec:memory}), which runs asynchronously
+    after cycle completion. This separation is intentional: the
+    pipeline's correctness properties---idempotent renders, atomic
+    gNMI commits, rollback chains via \texttt{PRECEDED\_BY}---depend
+    on determinism. The memory tier's value proposition---turning
+    thousands of structured agent notes into queryable operational
+    knowledge---is precisely where LLM summarisation excels. The
+    architecture puts each capability where it pays off.
+\end{enumerate}
+
+
+\subsection{Trigger-to-Push Pipeline}\label{sec:cl:pipeline}
+
+When a \texttt{git commit} touches the HLD file
+(\texttt{Enterprise\_Campus\_Network\_HLD.md}), the \texttt{post-commit}
+hook spawns \texttt{HldCommitPipeline.run(commit\_sha, hld\_path)}.
+The pipeline carries out twelve stages in order; each stage is
+described below with its agent, inputs, outputs, and the Neo4j layer
+it writes to.
+
+\begin{enumerate}[label=\textbf{Stage~\arabic*.},leftmargin=3em]
+  \item \textbf{Diff (parser).}
+    The HLD Markdown is parsed by a deterministic 584-line parser
+    (\texttt{hld\_parser.py}) that extracts structured sections:
+    the Device Inventory Table, population VLAN tables, DMZ VLAN
+    tables, and firewall policy matrices. The parser produces a
+    typed \texttt{HldChangeset} dataclass with fields:
+    \texttt{populations\_added}, \texttt{populations\_removed},
+    \texttt{populations\_modified}, \texttt{dmz\_added},
+    \texttt{dmz\_removed}, \texttt{dmz\_modified},
+    \texttt{devices\_added}, \texttt{devices\_removed},
+    \texttt{devices\_modified}. Each field is a list of
+    domain-specific typed records (e.g.\ \texttt{HldDevice} with
+    fields \texttt{hostname}, \texttt{vendor}, \texttt{platform},
+    \texttt{role}, \texttt{mgmt\_ipv4}). The changeset is
+    computed by diffing the parsed state of the new commit against
+    the previous commit's parsed state.
+
+  \item \textbf{Agent~1 (Ingestion).}
+    The ingestion agent (\texttt{agent1\_ingestion.py}, 584~lines)
+    receives the changeset and upserts nodes into Neo4j at layers
+    L1 (Device, VLAN, Site) and L4 (Intent). Every node is created
+    with \texttt{modelState = CANDIDATE}. Idempotency is enforced
+    by keying each intent on its HLD origin:
+    \texttt{HLD:<path>:<line\_number>}. If an intent with the same
+    origin already exists, the agent updates rather than duplicates.
+    Conflict detection queries all active intents and checks for
+    \texttt{CONFLICTING\_ACTION} (same target, incompatible action)
+    or \texttt{DUPLICATE} (same target, same action). Each write
+    is dual-sinked: a \texttt{live\_note()} call to the
+    \texttt{ibn-candidate-<version>} Live-Memory space records the
+    write's context (what was written, what was considered, why).
+    Events are published to the Redis Streams event bus:
+    \texttt{intent.ingested}, \texttt{device.added},
+    \texttt{device.modified}, \texttt{device.removed}.
+
+    For device changes, Agent~1 also handles lifecycle state: new
+    devices enter as \texttt{lifecycleState = PLANNED}, modified
+    devices are updated in place, and removed devices are marked
+    \texttt{RETIRED} (soft delete---the node stays in the graph for
+    audit).
+
+  \item \textbf{Provisioning.}
+    For any device deltas, the Provisioner
+    (\texttt{provisioner.py}) mutates the Containerlab topology YAML
+    and triggers a \texttt{clab deploy --reconfigure}. The
+    Provisioner has two code paths:
+
+    \begin{itemize}
+      \item \texttt{provision(device\_entry)}: single-device path.
+        Adds the node to the YAML, runs \texttt{clab deploy
+        --reconfigure}, waits for the container, records a
+        \texttt{LifecycleEvent} at L8.
+      \item \texttt{provision\_batch(device\_entries)}: multi-device
+        path (used when $|\text{devices\_added}| > 1$). Performs a
+        single YAML write and a single \texttt{clab deploy
+        --reconfigure} for the entire batch. This was a mid-Slice-5
+        fix: the per-device path ran \texttt{clab deploy
+        --reconfigure} once per device, and since \texttt{--reconfigure}
+        re-processes the entire topology each time, four sequential
+        deploys exceeded the 300\,s timeout on the third iteration.
+        The batch path completes in $\sim$10\,s.
+    \end{itemize}
+
+    The vendor$\rightarrow$containerlab-kind mapping is driven by a
+    dispatch table \texttt{\_KIND\_MAP}:
+
+    \begin{lstlisting}[language=Python,caption={Vendor dispatch for Containerlab kinds.}]
+_KIND_MAP = {
+  ("nokia","srlinux"): {"kind":"nokia_srlinux",
+    "image":"ghcr.io/nokia/srlinux:latest",
+    "type":"ixrd2l"},
+  ("vyos","vyos"): {"kind":"linux",
+    "image":"ghcr.io/sysoleg/vyos-container:latest"},
+  ("frr","frr"): {"kind":"linux",
+    "image":"ibn-frr:local"},
+}
+    \end{lstlisting}
+
+    Adding a new vendor to the provisioning path is one entry in
+    this table plus a Dockerfile for the container image.
+
+  \item \textbf{Agent~2 (Intent$\rightarrow$Policy).}
+    The policy decomposition agent (\texttt{agent2\_intent\_policy.py},
+    221~lines) receives the list of intent IDs produced by Stage~2 and
+    decomposes each into \texttt{Policy} and \texttt{FirewallRule}
+    nodes at L4. Policy IDs follow the pattern
+    \texttt{POL-<intent\_id>}; rule IDs follow
+    \texttt{RUL-<intent\_id>-<idx:02d>}. The decomposition is driven
+    by an \texttt{ACCESS\_MATRIX} dispatch table that maps a target
+    string (e.g.\ \texttt{"Internet+DMZ"}, \texttt{"DNS-DMZ"}) to a
+    list of concrete firewall rules with fields \texttt{destZone},
+    \texttt{action}, \texttt{protocol}, \texttt{destPort}, and
+    \texttt{description}.
+
+    Zone inference is currently rule-based: DMZ targets map to
+    \texttt{DMZ\_INFRA}, guest/contractor/visitor targets to
+    \texttt{GUEST}, all others to \texttt{USER}. Device-only commits
+    (no population or DMZ changes) short-circuit this stage entirely:
+    Agent~2 reports \texttt{skipped} and the pipeline continues with
+    the existing intent set.
+
+  \item \textbf{Agent~4 (Planning).}
+    The planning agent (\texttt{agent4\_planning.py}, 243~lines)
+    produces a \texttt{MigrationPlan} node at L7 with:
+    \begin{itemize}
+      \item A \textbf{severity classification} computed by a
+        deterministic heuristic:
+        \texttt{HIGH} if devices were added or removed;
+        \texttt{MEDIUM} if populations or DMZ segments were removed;
+        \texttt{LOW} if populations or DMZ segments were added or
+        modified; \texttt{INFO} if no changes detected.
+      \item A \textbf{blast radius}: the count and list of affected
+        devices, computed by traversing
+        \texttt{Configuration}$\rightarrow$\texttt{Device} edges
+        (\texttt{APPLIES\_TO}).
+      \item A \textbf{forward summary} (what will change) and an
+        \textbf{inverse summary} (how to undo it), both in
+        human-readable prose.
+    \end{itemize}
+    Plan IDs follow the pattern \texttt{PLAN-<commit\_sha[:8]>}.
+    If a prior \texttt{PENDING} plan exists for the same intent set,
+    it is automatically marked \texttt{SUPERSEDED} before the new
+    plan is written.
+
+  \item \textbf{Approval gate.}
+    If severity is \texttt{HIGH} (device additions or removals), the
+    pipeline deposits a Markdown summary under
+    \texttt{.git/ibn-pending-approval/<sha>.md} and halts. The
+    summary contains: severity, blast radius, affected device list,
+    forward and inverse summaries, and the command to approve. The
+    operator reviews and runs:
+
+    \begin{lstlisting}[language=bash,numbers=none]
+python -m ibn.tools.approve <sha>
+    \end{lstlisting}
+
+    The approve tool (\texttt{ibn.tools.approve}) transitions the
+    \texttt{MigrationPlan} from \texttt{PENDING} to \texttt{APPROVED},
+    records the operator identity and timestamp, cleans up the pending
+    Markdown, and invokes
+    \texttt{HldCommitPipeline.resume\_from\_approval(plan\_id)}.
+
+    For \texttt{LOW}/\texttt{INFO} severity, the gate auto-approves
+    (configurable via \texttt{IBN\_AUTO\_APPROVE=1} for test
+    environments).
+
+  \item \textbf{Agent~3 (Policy$\rightarrow$Config).}
+    The config rendering agent (\texttt{agent3\_policy\_config.py},
+    420~lines) is the most data-intensive stage. It executes ten
+    named Cypher queries against Neo4j to build a rendering context:
+    \texttt{firewalls} (FirewallPair$\rightarrow$Device with
+    \texttt{modelState IN ['POR','DEPLOYED']}), \texttt{zones}
+    (ordered by securityLevel), \texttt{segments}
+    (Segment$\rightarrow$VLAN via \texttt{MAPPED\_TO\_VLAN}),
+    \texttt{policies} (FirewallRule with legacy field coalescing),
+    \texttt{intents}, \texttt{fw\_interfaces},
+    \texttt{nat\_rules}, \texttt{fw\_transit} (VLAN 300 with
+    subnets), \texttt{switches} (non-firewall devices excluding
+    \texttt{RETIRED}), and \texttt{vlans}.
+
+    For each device, Agent~3 resolves the appropriate Jinja2
+    template chain from the \texttt{\_TEMPLATE\_CHAINS} dispatch
+    table:
+
+    \begin{lstlisting}[language=Python,caption={Template chains per vendor.}]
+_TEMPLATE_CHAINS = {
+  "vyos":    ["vyos_base.j2", "vyos_policies.j2",
+              "vyos_nat.j2", "vyos_ha.j2"],
+  "srlinux": ["srl_base.j2", "srl_interfaces.j2",
+              "srl_vlans.j2"],
+  "frr":     ["frr_base.j2", "frr_interfaces.j2",
+              "frr_routing.j2"],
+}
+    \end{lstlisting}
+
+    Each template in the chain is rendered against the Neo4j context
+    and concatenated. The resulting configuration blob is written as a
+    \texttt{Configuration} node at L5 with a content hash
+    (\texttt{SHA-256[:16]}) for change detection. A diff against the
+    previous configuration for the same device is computed to
+    determine whether the render produced net-new content.
+
+  \item \textbf{Agent~5 (Orchestration).}
+    The orchestration agent (\texttt{agent5\_orchestration.py},
+    $\sim$350~lines) pushes each rendered configuration to its live
+    device. The executor is resolved from a two-level dispatch:
+
+    \begin{lstlisting}[language=Python,caption={Executor dispatch with transport override.}]
+_VENDOR_EXECUTORS = {
+  "vyos":    _default_ssh_executor,
+  "srlinux": _srlinux_ssh_executor,
+  "frr":     _frr_executor,
+}
+
+def _resolve_executor(platform):
+  if platform == "srlinux" and
+     os.environ.get("IBN_SRLINUX_TRANSPORT")
+     == "gnmi":
+    return _srlinux_gnmi_executor
+  return _VENDOR_EXECUTORS.get(platform,
+    _default_ssh_executor)
+    \end{lstlisting}
+
+    Four executor implementations exist:
+    \begin{description}[style=sameline,leftmargin=2em]
+      \item[VyOS:] \texttt{paramiko} SSH to the device, pipe
+        configuration commands.
+      \item[SR~Linux (CLI):] \texttt{docker exec -i <container>
+        sr\_cli}, wrapping commands in
+        \texttt{enter candidate / ... / commit now / quit}.
+      \item[SR~Linux (gNMI):] A narrow CLI$\rightarrow$YANG path
+        translator (\texttt{\_srlinux\_yang.py}, $\sim$120~lines)
+        converts the rendered \texttt{set /} commands into gNMI
+        \texttt{(path, value)} tuples. The executor issues a single
+        \texttt{SetRequest} via \texttt{pygnmi}~\cite{pygnmi} to
+        \texttt{<mgmt-ipv4>:57400} with TLS (self-signed cert,
+        \texttt{skip\_verify=True}). The translator has ten rules
+        covering the exact line shapes the three \texttt{srl\_*.j2}
+        templates emit; unknown lines raise
+        \texttt{UnknownCliLine} to prevent silent config loss.
+        Multiple leaves under the same container path are merged
+        into a single gNMI update, reducing wire operations from
+        10 to 7 for a typical render.
+      \item[FRR:] \texttt{docker exec -i <container> vtysh},
+        wrapping in \texttt{enable / configure terminal / ... /
+        end / write memory}.
+    \end{description}
+
+    Each successful push records a \texttt{DeploymentEvent} node at
+    L5. Devices with empty rendered content (e.g.\ device-only commits
+    where templates produce no new output) are skipped.
+
+  \item \textbf{Agent~6 (Monitoring).}
+    The monitoring agent (\texttt{agent6\_monitoring.py}) collects
+    post-deployment telemetry via CLI polling (\texttt{show}
+    commands over SSH or \texttt{docker exec}). For each device it
+    creates \texttt{Telemetry} nodes and upserts
+    \texttt{OperationalState} nodes at L5 with
+    \texttt{modelState = AS\_BUILT}. Metrics include interface
+    state, VRRP role, BGP peer status, and OSPF neighbour count.
+    The monitoring interval is configurable (default 30\,s for the
+    inner loop).
+
+  \item \textbf{Agent~7 (Assessment).}
+    The assessment agent (\texttt{agent7\_assessment.py}, 417~lines)
+    compares the \texttt{POR} and \texttt{AS\_BUILT} subgraphs. It
+    fetches per-intent POR configurations and per-device As-Built
+    state, then runs three registered drift detectors:
+
+    \begin{description}[style=sameline,leftmargin=2em]
+      \item[\texttt{firewall\_rule}:] Detects missing or extra rules
+        by comparing POR FirewallRule sets against As-Built running
+        configuration snippets.
+      \item[\texttt{interface\_state}:] Detects interface
+        admin/oper-state mismatches.
+      \item[\texttt{vrrp\_role}:] Detects VRRP role mismatches
+        (primary/backup).
+    \end{description}
+
+    Each drift produces a \texttt{ComplianceAssessment} node at L6
+    with a verdict (\texttt{COMPLIANT}, \texttt{DEGRADED},
+    \texttt{NON\_COMPLIANT}, \texttt{UNKNOWN}) and a compliance
+    percentage. For non-compliant verdicts, a root-cause tracer
+    traverses the dependency graph (via
+    \texttt{REALIZED\_BY}/\texttt{AGGREGATES} edges) to identify
+    the causal chain and assigns a confidence level
+    (\texttt{HIGH} or \texttt{LOW}).
+
+    If drift events are detected, an \texttt{Incident} node is
+    created at L6, linked to the assessment. Severity classification:
+    \texttt{CRITICAL} ($\geq$3 drift events), \texttt{HIGH}
+    (non-compliant verdict), \texttt{MEDIUM} (default).
+
+  \item \textbf{Agent~8 (Action).}
+    The action agent (\texttt{agent8\_action.py}, 405~lines) receives
+    incident data from Agent~7 and applies a five-level autonomy
+    decision matrix:
+
+    \begin{table}[H]
+    \small
+    \centering
+    \caption{Agent~8 autonomy decision matrix.}
+    \label{tab:autonomy}
+    \begin{tabular}{@{}llcc@{}}
+    \toprule
+    \textbf{Severity} & \textbf{Action} & \textbf{Auto} & \textbf{Human}\\
+    \midrule
+    \texttt{INFO}     & Log only             & \checkmark & \\
+    \texttt{LOW}      & Auto-remediate       & \checkmark & \\
+    \texttt{MEDIUM}   & Remediate + verify   & \checkmark & \\
+    \texttt{HIGH}     & Escalate             &            & \checkmark\\
+    \texttt{CRITICAL} & Rollback + escalate  &            & \checkmark\\
+    \bottomrule
+    \end{tabular}
+    \end{table}
+
+    Auto-remediation re-invokes A3$\rightarrow$A5 on the narrowed
+    artefact set for the affected devices. Rollback walks the
+    \texttt{PRECEDED\_BY} chain one step to retrieve the previous
+    \texttt{Configuration} node and re-pushes it. Every action is
+    recorded as a \texttt{Remediation} node at L6 with fields:
+    \texttt{remediationId}, \texttt{intentId}, \texttt{action},
+    \texttt{success}, \texttt{error}, \texttt{escalated},
+    \texttt{rollbackCount}.
+
+  \item \textbf{Agents~9--10 (Abstraction, Reporting).}
+    Agent~9 aggregates device-level observations into intent-level
+    compliance scores using \texttt{ABSTRACTS} edge traversals.
+    Agent~10 generates human-facing compliance reports. Both are
+    designed but not yet fully implemented in the current prototype;
+    their stubs emit aggregate metrics to the event bus and write
+    summary data to the graph.
+\end{enumerate}
+
+\subsection{Pipeline Timing}
+
+A typical no-op HLD edit (comment change, no structural delta)
+completes the full twelve-stage cycle in 8--10\,s against the current
+testbed (16 Containerlab nodes on a 12\,GB ARM64 host). The
+dominant costs are Neo4j Bolt round-trips ($\sim$200\,ms per Cypher
+query, ten queries in A3) and container-exec I/O ($\sim$1\,s per
+device push). A device-addition commit, which goes through the
+approval gate and a \texttt{clab deploy --reconfigure}, completes
+in 20--40\,s of wall-clock time once the human approval is granted.
+The approval itself is out-of-band and untimed.
+
+
+\subsection{Invariants}\label{sec:cl:invariants}
+
+Three invariants hold across every stage of the pipeline and are
+load-bearing for the system's correctness:
+
+\begin{description}
+  \item[I1: Every agent write is dual-sink.] Every node or edge an
+    agent writes to Neo4j is accompanied by a structured
+    \texttt{live\_note()} call into a Live-Memory space keyed on the
+    current model state. This preserves the \emph{why} of the write
+    (prompt, inputs considered, alternatives rejected) alongside the
+    \emph{what} (the graph mutation itself). Invariant~I1 is enforced
+    by the \texttt{BaseAgent} class: every agent inherits from
+    \texttt{BaseAgent}, which provides a \texttt{\_note()} helper
+    that writes to both sinks atomically. An agent that calls
+    \texttt{neo4j.create\_*} without a corresponding
+    \texttt{\_note()} violates the contract; this is detectable by
+    static analysis (grep for unmatched writes).
+
+  \item[I2: Every node carries \texttt{modelState}.] The five-valued
+    \texttt{modelState} property (\texttt{WHAT\_IF}, \texttt{CANDIDATE},
+    \texttt{POR}, \texttt{DEPLOYED}, \texttt{AS\_BUILT}) is written on
+    every node creation and transitioned through well-defined edges. A
+    legal transition table (eight edges, four rollback paths) is
+    enforced by the \texttt{ModelStateController}; illegal transitions
+    raise \texttt{ModelStateTransitionError} at write time rather than
+    corrupting the graph silently. Every transition creates a
+    \texttt{LifecycleTransition} node at L8 linked to the affected
+    intent via a \texttt{HAS\_TRANSITION} edge.
+
+  \item[I3: Every agent execution is recorded.] Each agent run
+    produces an \texttt{AgentExecution} node at L9 with the agent
+    ID, start/end timestamps, inputs summary, outputs summary,
+    success/failure status, and the intent ID being processed. This
+    provides full traceability from intent to device to compliance
+    assessment and back.
+\end{description}
+
+Together, I1--I3 ensure the system is fully introspectable: at any
+point, an operator can ask ``what is POR right now?'' (query
+\texttt{modelState = 'POR'} in Neo4j), ``what changed in the last
+cycle?'' (query recent \texttt{AgentExecution} and
+\texttt{LifecycleTransition} nodes), and ``why did the agent do
+this?'' (read the corresponding Live-Memory note) and get machine-
+structured answers.
+
+
+%% ===================================================================
+\section{SSoT: Nine-Layer Knowledge-Graph Ontology}\label{sec:ssot}
+%% ===================================================================
+
+The Single Source of Truth (SSoT) is a Neo4j~\cite{neo4j} property
+graph whose schema is organised as a \emph{layered ontology}. The
+ontology is codified in 616~lines of Cypher DDL
+(\texttt{Neo4j\_Schema\_Cypher.cypher}) with constraints, indexes,
+and seed-data templates. Layering is load-bearing: each agent in the
+pipeline of Section~\ref{sec:agents} writes into a small,
+well-defined subset of layers, and every cross-layer relationship
+has an explicit, audit-friendly semantics. The ontology is inspired
+by Google's MALT~\cite{malt} multi-level topology abstraction, but
+specialised for the IBN lifecycle rather than for datacentre traffic
+engineering, and aligned with the fulfilment/assurance split of
+RFC~9315~\cite{rfc9315}.
+
+
+\subsection{The Nine Layers}\label{sec:ssot:layers}
+
+Table~\ref{tab:layers} lists the nine layers with their canonical
+node labels. Labels are reserved tokens: every node in the graph
+carries exactly one \emph{primary} layer label (e.g.\
+\texttt{Device}, \texttt{Intent}, \texttt{MigrationPlan}) and may
+carry additional tag labels (e.g.\ \texttt{:Active}, \texttt{:POR}).
+
+\begin{table}[t]
+\small
+\centering
+\caption{Nine-layer ontology: one canonical label set per layer, with the
+agent(s) that write to each layer.}
+\label{tab:layers}
+\begin{tabular}{@{}lllp{3cm}@{}}
+\toprule
+\textbf{Layer} & \textbf{Name} & \textbf{Representative labels} & \textbf{Writers}\\
+\midrule
+L1 & Infrastructure &
+  \texttt{Site}, \texttt{Device}, \texttt{Interface},
+  \texttt{PhysicalLink}, \texttt{LogicalLink}, \texttt{VLAN},
+  \texttt{VRF}, \texttt{Subnet}, \texttt{IPAddress} &
+  A1\\
+L2 & Topology &
+  \texttt{Topology}, \texttt{TopologyLayer}, \texttt{Zone},
+  \texttt{Segment}, \texttt{FirewallPair}, \texttt{StackGroup} &
+  A1 (seed)\\
+L3 & Architecture &
+  \texttt{Architecture}, \texttt{ArchitectureVersion},
+  \texttt{HLD}, \texttt{ARD}, \texttt{BusinessUseCase} &
+  A1 (seed)\\
+L4 & Policy \& Intent &
+  \texttt{Intent}, \texttt{Policy}, \texttt{FirewallRule},
+  \texttt{SGT}, \texttt{QoSPolicy} &
+  A1, A2\\
+L5 & Config \& State &
+  \texttt{Configuration}, \texttt{DeploymentEvent},
+  \texttt{Telemetry}, \texttt{OperationalState} &
+  A3, A5, A6\\
+L6 & Incidents &
+  \texttt{Alert}, \texttt{Incident}, \texttt{RootCause},
+  \texttt{ComplianceAssessment}, \texttt{Remediation} &
+  A7, A8\\
+L7 & Change Mgmt &
+  \texttt{ChangeRequest}, \texttt{MigrationPlan} &
+  A4\\
+L8 & Lifecycle &
+  \texttt{LifecyclePhase}, \texttt{LifecycleTransition},
+  \texttt{LifecycleEvent} &
+  Provisioner, MSC\\
+L9 & People/Process &
+  \texttt{Operator}, \texttt{Team}, \texttt{Ticket},
+  \texttt{SLA}, \texttt{AgentExecution} &
+  All agents\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The layering is strictly semantic, not a storage partition: Neo4j
+holds all labels in a single graph so that queries can traverse
+across layers in a single Cypher statement. The value of the layer
+is that it constrains \emph{who writes what}: Agent~1 only writes
+L1/L4; Agent~3 only writes L5; Agent~7 only writes L6. This makes
+each agent's blast radius on the graph bounded and testable. A
+table of agents and their write layers is included in
+Table~\ref{tab:layers}.
+
+\paragraph{Layer design rationale.}
+The nine layers correspond to nine qualitatively different concerns
+in the network lifecycle. Layers L1--L3 capture the static
+structure (infrastructure, topology, architecture) that changes on
+the timescale of HLD revisions. L4 captures intent and policy,
+which change on the timescale of business requirements. L5 captures
+the dynamic configuration and operational state that changes on the
+timescale of pipeline cycles. L6 captures incidents and compliance,
+which are generated as side effects of assurance. L7 captures
+planned changes, which exist between intent and deployment. L8
+captures lifecycle transitions, which are the audit trail of state
+evolution. L9 captures the human and agent actors involved.
+
+
+\subsection{Cross-Layer Relationships}\label{sec:ssot:rels}
+
+Six cross-layer relationship types form the backbone of the
+ontology. They are the \emph{only} edges permitted to cross a layer
+boundary; intra-layer edges (e.g.\ \texttt{CONNECTS\_TO} between two
+\texttt{Interface} nodes, \texttt{PEER\_OF} between two
+\texttt{Device} nodes) are free-form within a layer.
+
+\begin{description}
+  \item[\texttt{REALIZED\_BY} (descending realisation).]
+    An \texttt{Intent} (L4) is \texttt{REALIZED\_BY} a set of
+    \texttt{Policy}/\texttt{FirewallRule} nodes (L4), which are in
+    turn \texttt{REALIZED\_BY} \texttt{Configuration} nodes (L5),
+    which are \texttt{REALIZED\_BY} the live
+    \texttt{OperationalState} (L5). The \texttt{REALIZED\_BY} chain
+    is the primary audit trail: following it downward from an intent
+    answers ``does this intent actually exist on the wire?''. Agent~7
+    performs exactly this traversal during drift detection: it
+    fetches the \texttt{POR} configuration for an intent via
+    \texttt{REALIZED\_BY} edges and compares it against the
+    \texttt{AS\_BUILT} operational state.
+
+  \item[\texttt{ABSTRACTS} (ascending abstraction).]
+    The inverse of \texttt{REALIZED\_BY}. Agent~9 uses
+    \texttt{ABSTRACTS} edges to roll up device-level observations
+    into intent-level compliance scores and then into site-level
+    summaries.
+
+  \item[\texttt{AGGREGATES} (set membership).]
+    Distinct from realisation. A \texttt{FirewallPair} (L2)
+    \texttt{AGGREGATES} two \texttt{Device} nodes (L1); a
+    \texttt{Segment} (L2) \texttt{AGGREGATES} a set of
+    \texttt{VLAN} nodes (L1). \texttt{AGGREGATES} is structural---it
+    says ``these nodes form a group''---while \texttt{REALIZED\_BY}
+    is functional---it says ``this node is the concrete form of that
+    abstract node''.
+
+  \item[\texttt{CONTAINS} (structural nesting).]
+    A \texttt{Site} (L1) \texttt{CONTAINS} \texttt{Device} nodes;
+    an \texttt{Architecture} (L3) \texttt{CONTAINS}
+    \texttt{ArchitectureVersion} nodes; an \texttt{HLD} (L3)
+    \texttt{CONTAINS} \texttt{Intent} nodes extracted from its
+    sections. \texttt{CONTAINS} always points from a parent to its
+    children within a single ownership hierarchy.
+
+  \item[\texttt{TRAVERSES} (policy crossing).]
+    A \texttt{FirewallRule} (L4) \texttt{TRAVERSES} a
+    \texttt{FirewallPair} (L2). An \texttt{Intent} (L4)
+    \texttt{TRAVERSES} a \texttt{Zone} (L2) when its scope is
+    zone-level. Blast-radius analysis in Agent~4 is largely a
+    \texttt{TRAVERSES} traversal: ``how many zones does this intent
+    cross? how many firewall pairs does this rule set touch?''.
+
+  \item[\texttt{PRECEDED\_BY} (temporal ordering).]
+    Every \texttt{Configuration} node carries a
+    \texttt{PRECEDED\_BY} edge to the configuration it replaced.
+    Rollback in Agent~8 is implemented by walking
+    \texttt{PRECEDED\_BY} one step and re-pushing the predecessor.
+    The chain is unbounded; an operator can walk it back to the
+    initial configuration to see the full history of a device's
+    config evolution.
+\end{description}
+
+
+\subsection{Five Concurrent Model States}\label{sec:ssot:states}
+
+Every node in the graph carries a \texttt{modelState} property
+drawn from the set
+$\mathcal{S} = \{$\texttt{WHAT\_IF}, \texttt{CANDIDATE},
+\texttt{POR}, \texttt{DEPLOYED}, \texttt{AS\_BUILT}$\}$.
+The five states co-exist \emph{simultaneously} as overlapping
+subgraphs over the same node labels and relationship types;
+selecting a state is a Cypher filter on \texttt{modelState}.
+This design is directly inspired by MALT's~\cite{malt} observation
+that multiple levels of abstraction must be maintained
+simultaneously for a topology to be operationally useful.
+
+\begin{description}
+  \item[\texttt{WHAT\_IF}.]
+    Exploratory scratch space used by Agent~4 during planning.
+    Blast-radius simulations clone the affected subgraph into
+    \texttt{WHAT\_IF} state, mutate it, and discard it after
+    analysis. The production graph is never touched.
+
+  \item[\texttt{CANDIDATE}.]
+    State produced by a freshly committed HLD that has not yet been
+    approved. Agent~1 writes new nodes directly as
+    \texttt{CANDIDATE}. The \texttt{CANDIDATE} subgraph is the
+    ``proposed future'': it co-exists with the current \texttt{POR}
+    until the approval gate promotes it.
+
+  \item[\texttt{POR} (Plan-of-Record).]
+    The canonical intent: what the network \emph{should} be.
+    Transition from \texttt{CANDIDATE} to \texttt{POR} happens only
+    after the approval gate is cleared. All rendering queries in
+    Agent~3 filter for \texttt{modelState IN ['POR', 'DEPLOYED']} to
+    ensure they operate against approved state.
+
+  \item[\texttt{DEPLOYED}.]
+    Reflects what Agent~5 actually pushed, device by device. A
+    \texttt{Configuration} node becomes \texttt{DEPLOYED} when the
+    executor returns success. \texttt{DEPLOYED} may temporarily
+    differ from \texttt{POR} during a rolling deployment when some
+    devices have been updated and others have not.
+
+  \item[\texttt{AS\_BUILT}.]
+    The ground-truth view built from Agent~6's telemetry. May
+    diverge from \texttt{DEPLOYED} in the presence of out-of-band
+    changes, partial push failures, or device-side configuration
+    mutations. Agent~7's drift detection is precisely a
+    \texttt{POR} vs.\ \texttt{AS\_BUILT} set-difference over the
+    subgraph.
+\end{description}
+
+\paragraph{Legal transitions.}
+The \texttt{ModelStateController} (298~lines) enforces eight legal
+transitions stored as a frozen set of \texttt{(from, to)} pairs:
+
+\medskip
+\noindent\textit{Forward:}
+\texttt{WHAT\_IF}~$\rightarrow$~\texttt{CANDIDATE}
+$\rightarrow$~\texttt{POR}
+$\rightarrow$~\texttt{DEPLOYED}
+$\rightarrow$~\texttt{AS\_BUILT}
+
+\noindent\textit{Rollback:}
+\texttt{CANDIDATE}~$\rightarrow$~\texttt{WHAT\_IF},
+\texttt{POR}~$\rightarrow$~\texttt{CANDIDATE},
+\texttt{DEPLOYED}~$\rightarrow$~\texttt{POR},
+\texttt{AS\_BUILT}~$\rightarrow$~\texttt{DEPLOYED}
+\medskip
+
+Any other transition raises \texttt{ModelStateTransitionError}.
+Every transition creates a \texttt{LifecycleTransition} node at L8
+with fields: \texttt{transitionId}, \texttt{intentId},
+\texttt{fromState}, \texttt{toState}, \texttt{reason},
+\texttt{operator}, \texttt{timestamp}. The controller also assigns
+each transition to a Live-Memory space via a prefix map:
+
+\begin{lstlisting}[language=Python,caption={Live-Memory space prefix per model state.}]
+_SPACE_PREFIXES = {
+  "WHAT_IF":   "ibn-whatif",
+  "CANDIDATE": "ibn-candidate",
+  "POR":       "ibn-por",
+  "DEPLOYED":  "ibn-deploy",
+  "AS_BUILT":  "ibn-asbuilt",
+}
+\end{lstlisting}
+
+Convenience methods \texttt{approve()}, \texttt{deploy()},
+\texttt{verify()}, and \texttt{rollback()} wrap the generic
+\texttt{transition()} call with the appropriate \texttt{(from, to)}
+pair and a default reason string.
+
+
+\subsection{Profiles and Schema Governance}\label{sec:ssot:profiles}
+
+Neo4j constraints encode the ontology machine-checkably. Beyond
+unique-key constraints on node identifiers (e.g.\
+\texttt{CREATE CONSTRAINT FOR (d:Device) REQUIRE d.deviceId IS
+UNIQUE}), the schema declares \emph{profiles}: named bundles of
+Cypher constraints that capture deployment-specific invariants.
+Three profiles are defined:
+
+\begin{description}
+  \item[Campus profile.] Every \texttt{Device} must be
+    \texttt{CONTAINS}-linked to exactly one \texttt{Site}. Every
+    \texttt{FirewallRule} must \texttt{TRAVERSES} exactly one
+    \texttt{FirewallPair}. Every \texttt{VLAN} must have a
+    non-null \texttt{vlanId}. This profile matches the reference
+    HLD topology.
+
+  \item[Branch profile.] Relaxes the Campus profile to allow
+    devices without a \texttt{FirewallPair} (branch sites may
+    use a cloud firewall), and allows VLANs without a local
+    \texttt{Segment} assignment.
+
+  \item[Lab profile.] The most permissive profile. Allows
+    devices without site assignment (for ad-hoc containerlab
+    testing) and relaxes firewall-pair constraints.
+\end{description}
+
+Violating a profile constraint is a deployment-time Cypher error,
+not a runtime surprise. The active profile is set per environment
+via the \texttt{IBN\_SCHEMA\_PROFILE} variable.
+
+Schema evolution is versioned semantically
+(\texttt{MAJOR.MINOR.PATCH}) with an explicit
+\texttt{OntologyVersion} node tracking which version is active. A
+six-month stability window on the \texttt{MAJOR} version gives
+agents a contract they can rely on, and a named stored-procedure
+library over canonical Cypher queries insulates agents from
+\texttt{MINOR}-version column renames.
+
+
+\subsection{Why Nine Layers, Not Fewer}\label{sec:ssot:why}
+
+Early iterations of the ontology collapsed L7 (Change Management)
+into L8 (Lifecycle) and L6 (Incidents) into L5 (Config \& State).
+Both collapses damaged query ergonomics and introduced write-lock
+contention:
+
+\begin{itemize}
+  \item Separating L6 from L5 lets the assurance agents (A7, A8)
+    own their own layer without competing for write-locks with the
+    fulfilment agents (A3, A5, A6) operating on L5. In a concurrent
+    inner loop where A6 is writing telemetry to L5 while A7 is
+    writing assessments, the two agents touch disjoint label sets.
+
+  \item Separating L7 from L8 decouples \emph{planned} change
+    (\texttt{MigrationPlan}, \texttt{ChangeRequest}) from
+    \emph{actual} transitions (\texttt{LifecycleEvent},
+    \texttt{LifecyclePhase}). This matters because the former are
+    reasoned about \emph{prospectively} (Agent~4 creates them before
+    approval) and the latter are reasoned about
+    \emph{retrospectively} (the audit trail after the fact).
+
+  \item Separating L9 from L7/L8 gives the agent execution audit
+    trail its own namespace. Every agent writes an
+    \texttt{AgentExecution} node to L9 on every run; mixing these
+    high-frequency writes with the lower-frequency
+    \texttt{MigrationPlan} nodes of L7 would pollute that layer's
+    query results.
+\end{itemize}
+
+The nine-layer decomposition is the smallest we found that keeps
+each agent's write set disjoint across the most common concurrent
+execution patterns.
+
+
+%% ===================================================================
+\section{The Ten Agents}\label{sec:agents}
+%% ===================================================================
+
+Table~\ref{tab:agents} summarises the ten agents. Each agent
+inherits from a common \texttt{BaseAgent} class (181~lines) that
+provides: Neo4j and Live-Memory client injection, a
+\texttt{\_note()} dual-sink helper (Invariant~I1), an
+\texttt{AgentExecution} recording wrapper (Invariant~I3), and
+a typed \texttt{\_execute(**kwargs) -> dict} contract that each
+agent overrides.
+
+\begin{table}[t]
+\small
+\centering
+\caption{The ten agents: line counts, primary inputs, outputs, and
+write layers. Line counts are for the agent module only, excluding
+shared infrastructure.}
+\label{tab:agents}
+\begin{tabular}{@{}llrrll@{}}
+\toprule
+\textbf{Agent} & \textbf{Name} & \textbf{Lines} & \textbf{RFC} & \textbf{Input} & \textbf{Output}\\
+\midrule
+A1 & Ingestion          & 584 & \S5.1.1 & HldChangeset     & Intent, Device, VLAN\\
+A2 & Intent$\rightarrow$Policy    & 221 & \S5.1.2 & Intent IDs       & Policy, FirewallRule\\
+A3 & Policy$\rightarrow$Config    & 420 & \S5.1.2 & Neo4j context    & Configuration\\
+A4 & Planning           & 243 & \S5.1.2 & Changeset+configs & MigrationPlan\\
+A5 & Orchestration      & 350 & \S5.1.3 & Configuration    & DeploymentEvent\\
+A6 & Monitoring         & 380 & \S5.2.1 & Device list      & Telemetry, OpState\\
+A7 & Assessment         & 417 & \S5.2.2 & POR vs As-Built  & Assessment, Incident\\
+A8 & Action             & 405 & \S5.2.3 & Incident         & Remediation\\
+A9 & Abstraction        & --- & \S5.2   & Assessments      & Aggregated scores\\
+A10& Reporting          & --- & \S5.2   & Aggregations     & Reports\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The total implementation of the eight active agents (A1--A8) is
+3,020~lines of Python. Adding A9 and A10 (currently stubs) will
+bring the total to approximately 3,500~lines.
+
+\paragraph{Dispatch-table architecture.}
+A recurring pattern across agents is the use of dispatch tables to
+decouple vendor- or type-specific logic from the agent's control
+flow. Three dispatch tables are central:
+
+\begin{enumerate}
+  \item \textbf{\texttt{\_KIND\_MAP}} (Provisioner): maps
+    \texttt{(vendor, platform)} to containerlab kind, image, and
+    type. Adding Nokia SR~Linux, FRR, and VyOS required one entry
+    each---three lines total.
+  \item \textbf{\texttt{\_TEMPLATE\_CHAINS}} (Agent~3): maps
+    platform to an ordered list of Jinja2 template filenames. Adding
+    FRR required one entry (three templates); adding SR~Linux
+    required one entry (three templates).
+  \item \textbf{\texttt{\_VENDOR\_EXECUTORS}} (Agent~5): maps
+    platform to a callable that pushes configuration. Adding the
+    gNMI transport for SR~Linux required one new callable and a
+    two-line dispatch override keyed on
+    \texttt{IBN\_SRLINUX\_TRANSPORT}.
+\end{enumerate}
+
+This architecture-as-data pattern means that adding a fourth vendor
+(e.g.\ Arista cEOS) requires: one \texttt{\_KIND\_MAP} entry, one
+\texttt{\_TEMPLATE\_CHAINS} entry (pointing to new Jinja2
+templates), one executor function, and a Dockerfile for the container
+image. No existing agent code changes.
+
+The detailed operation of each agent is described in
+Section~\ref{sec:cl:pipeline}. Here we note one additional design
+decision per agent that is not covered by the pipeline description:
+
+\begin{description}
+  \item[A1:] Interactive dialogue support. When a population VLAN
+    is ambiguous (e.g.\ multiple valid access-list templates apply),
+    Agent~1 can invoke a \texttt{dialogue\_fn} callback with a
+    prompt and a list of choices (\texttt{\_ACCESS\_TEMPLATES}: four
+    templates labelled a/b/c/d). In batch mode the dialogue is
+    auto-resolved to the first template; in interactive mode the
+    operator selects.
+
+  \item[A2:] Zone inference is rule-based, not LLM-based. The
+    mapping from target string to source zone
+    (\texttt{DMZ}~$\rightarrow$~\texttt{DMZ\_INFRA},
+    \texttt{guest}~$\rightarrow$~\texttt{GUEST}, else
+    \texttt{USER}) is three lines of code. This is deliberately
+    minimal: the HLD's zone assignment table is authoritative, and
+    the agent's role is to decompose, not to infer.
+
+  \item[A3:] Content-hash-based change detection. Each rendered
+    configuration is SHA-256 hashed (truncated to 16 hex chars).
+    If the hash matches the previous configuration for the same
+    device, the render is considered a no-op and no new
+    \texttt{Configuration} node is written. This prevents redundant
+    deployment events when the HLD is committed with cosmetic
+    changes that do not affect device state.
+
+  \item[A4:] Supersession logic. If a \texttt{PENDING} migration
+    plan already exists when a new commit is processed, the old
+    plan is marked \texttt{SUPERSEDED} rather than deleted. The
+    superseded plan stays in the graph for audit, linked to the
+    new plan via a \texttt{PRECEDED\_BY} edge.
+
+  \item[A7:] Decorator-based drift detector registration. New
+    drift detectors are added by writing a function decorated with
+    \texttt{@\_drift\_detector("name")}; the decorator registers it
+    in a global \texttt{\_DRIFT\_DETECTORS} dict. The assessment
+    loop iterates over all registered detectors. Three are currently
+    registered: \texttt{firewall\_rule}, \texttt{interface\_state},
+    \texttt{vrrp\_role}.
+
+  \item[A8:] Severity classification is intentionally decoupled
+    from Agent~7's. Agent~7 classifies assessment severity (how bad
+    is the drift?); Agent~8 classifies action severity (what should
+    we do about it?). The two classifications use different inputs:
+    A7 uses drift-event count and compliance percentage; A8 uses
+    business-impact signals (service impact, redundancy status,
+    device count).
+\end{description}
+
+
+%% ===================================================================
+\section{Three-Tier Memory}\label{sec:memory}
+%% ===================================================================
+
+\subsection{Architecture Overview}
+
+The three-tier memory architecture separates three qualitatively
+different kinds of knowledge:
+
+\begin{description}
+  \item[Tier~1: Neo4j SSoT (\emph{what is}).]
+    Structured, typed, queryable network state across nine layers.
+    Accessed via Bolt (port 7687). Every agent reads and writes
+    this tier on every cycle. Latency: $\sim$200\,ms per Cypher
+    query.
+
+  \item[Tier~2: Live-Memory (\emph{why it is so}).]
+    Working memory for agent reasoning. Exposed via Model Context
+    Protocol (MCP) Streamable HTTP on port 8002, backed by S3
+    object storage. Each model state has a dedicated space (e.g.\
+    \texttt{ibn-candidate-001}, \texttt{ibn-por-v1},
+    \texttt{ibn-deploy-evt1}, \texttt{ibn-asbuilt-snap1}) plus
+    two loop-scoped spaces (\texttt{ibn-loop-inner},
+    \texttt{ibn-loop-outer}). Agents write structured notes via
+    \texttt{live\_note()} calls that include: agent ID, timestamp,
+    operation type, inputs summary, outputs summary, and
+    free-text rationale. The notes accumulate in a \emph{bank}
+    per space; the bank is periodically consolidated.
+
+  \item[Tier~3: Graph-Memory (\emph{what was learned}).]
+    Long-term knowledge graph with vector embeddings. Exposed via
+    MCP on the same port (namespaced as \texttt{IBN\_LIFECYCLE\_*}
+    labels in a separate Neo4j instance) plus Qdrant for BGE-M3
+    1024-dimension embeddings. This tier stores entities and
+    relations extracted from consolidated bank files using an
+    LLM guided by the IBN Lifecycle Ontology. Agents query this
+    tier via \texttt{question\_answer()} for historical
+    precedent-based decision making (graph-guided RAG).
+\end{description}
+
+
+\subsection{The IBN Lifecycle Ontology}\label{sec:memory:ontology}
+
+The Graph-Memory entity extraction is guided by a domain-specific
+ontology (\texttt{ibn\_lifecycle\_ontology.yaml}, 472~lines) that
+defines 14 entity classes across four families and 8 relationship
+types.
+
+\paragraph{Entity families.}
+
+\begin{enumerate}
+  \item \textbf{Decisions \& Rationale} (5 classes):
+    \texttt{PolicyDecision} (firewall/zone decisions),
+    \texttt{DesignChoice} (architectural decisions),
+    \texttt{TradeOff} (competing approaches evaluated),
+    \texttt{RejectedAlternative} (explicitly rejected options),
+    \texttt{ApprovalRecord} (human sign-offs with operator identity
+    and timestamp).
+
+  \item \textbf{Incidents \& Remediation} (5 classes):
+    \texttt{DriftEvent} (POR vs.\ As-Built mismatches),
+    \texttt{RootCauseAnalysis} (causal chains for drift),
+    \texttt{RemediationAction} (auto-fix or rollback records),
+    \texttt{EscalationRecord} (human escalation events),
+    \texttt{ComplianceTrend} (compliance trajectory across
+    iterations: improving, stable, degrading).
+
+  \item \textbf{Operations \& Deployment} (4 classes):
+    \texttt{DeploymentNarrative} (config push records with
+    per-device outcome),
+    \texttt{ConfigurationRationale} (why a template rendered the
+    way it did---e.g.\ ``VLAN~100 assigned to subinterface~100
+    because the HLD population table maps Employee to VLAN~100''),
+    \texttt{RollbackRecord} (rollback events with before/after
+    config hashes),
+    \texttt{VerificationResult} (post-push verification outcomes).
+
+  \item \textbf{Knowledge \& Patterns} (4 classes):
+    \texttt{RecurringPattern} (drift/latency/error correlations
+    observed across multiple cycles),
+    \texttt{LessonLearned} (operational guidance distilled from
+    incident history),
+    \texttt{CapacityInsight} (resource constraints---e.g.\ ``host
+    memory gates provisioning beyond 12 nodes''),
+    \texttt{CorrelationFinding} (metric correlations discovered
+    by the aggregation pipeline).
+\end{enumerate}
+
+\paragraph{Relationship types.}
+Eight typed relationships connect entities across families:
+
+\begin{enumerate}
+  \item \texttt{CAUSED\_BY}: drift/remediation to root cause.
+  \item \texttt{RESOLVED\_BY}: incident to fix action.
+  \item \texttt{PRECEDED}: temporal ordering of events.
+  \item \texttt{JUSTIFIED\_BY}: decision to supporting rationale.
+  \item \texttt{CONTRADICTS}: new finding vs.\ old lesson/pattern.
+  \item \texttt{CONFIRMS}: event that validates a known pattern.
+  \item \texttt{SIMILAR\_TO}: cross-iteration pattern matching
+    (primary RAG retrieval link).
+  \item \texttt{INFORMED\_BY}: decision informed by historical
+    precedent (explicit query provenance).
+\end{enumerate}
+
+\paragraph{Extraction hints.}
+The ontology includes natural-language extraction hints (lines
+432--472) that guide the LLM's entity recognition. For example,
+the \texttt{DriftEvent} class is triggered by phrases like
+``drift detected'', ``non-compliant'', ``missing rule''; the
+\texttt{LessonLearned} class by ``lesson:'', ``best practice'',
+``should always''. These hints are injected into the LLM's
+system prompt during \texttt{graph\_push()} to improve extraction
+precision without fine-tuning.
+
+
+\subsection{Consolidation Pipeline}\label{sec:memory:consolidation}
+
+The \texttt{ConsolidationManager} (395~lines) orchestrates the
+Tier~2$\rightarrow$Tier~3 data flow:
+
+\begin{enumerate}
+  \item \textbf{Trigger.} Consolidation fires on three events:
+    (a)~a model-state transition
+    (e.g.\ \texttt{CANDIDATE}$\rightarrow$\texttt{POR} after
+    approval), (b)~the inner loop completing a full cycle, or
+    (c)~the note count in a Live-Memory space exceeding a
+    configurable threshold (default: 20 notes).
+
+  \item \textbf{Consolidate.} The manager calls
+    \texttt{bank\_consolidate(space\_id)} on the Live-Memory
+    MCP server, which invokes an LLM to summarise the accumulated
+    notes into a structured bank file. The LLM is configured via
+    \texttt{LLMAAS\_API\_URL} and \texttt{LLMAAS\_MODEL}; the
+    current testbed defaults to Claude Haiku~4.5 via Cloud-Temple's
+    LLMaaS proxy, with Qwen3-235B as an alternative. The
+    consolidation is space-specific: each model-state space has
+    its own consolidation cadence and rules.
+
+  \item \textbf{Push.} If the transition is \emph{push-eligible}
+    (to \texttt{POR}, \texttt{DEPLOYED}, or \texttt{AS\_BUILT}),
+    the manager reads all bank files via
+    \texttt{bank\_read\_all(space\_id)} and pushes them to
+    Graph-Memory via \texttt{graph\_push\_batch(memory,
+    bank\_files, space\_id)}. The Graph-Memory server base64-encodes
+    each bank file, invokes the LLM with the IBN Lifecycle Ontology
+    as context, extracts typed entities and relations, embeds them
+    with BGE-M3 (1024 dimensions), and stores them in Qdrant +
+    the Graph-Memory Neo4j instance (namespaced under
+    \texttt{IBN\_LIFECYCLE\_*} labels).
+
+  \item \textbf{Query.} Any agent can query Tier~3 via
+    \texttt{question\_answer(memory, question, max\_results=5)},
+    which performs graph-guided RAG: the question is embedded,
+    nearest-neighbour entities are retrieved from Qdrant, their
+    graph neighbourhood is traversed via \texttt{SIMILAR\_TO} and
+    \texttt{INFORMED\_BY} edges, and the combined context is
+    returned to the caller.
+\end{enumerate}
+
+The consolidation pipeline is asynchronous and non-blocking: it
+runs after the pipeline cycle completes and never delays the
+fulfilment or assurance path. The manager also runs a background
+sweep loop (default interval: 3,600\,s) that checks all spaces
+for threshold-exceeding note counts, providing a safety net for
+spaces that miss event-driven triggers.
+
+
+\subsection{LLM Backend Configuration}\label{sec:memory:llm}
+
+The LLM is used in exactly two places: Live-Memory consolidation
+(bank summarisation) and Graph-Memory ingestion (entity/relation
+extraction). Neither is in the request path of any pipeline stage.
+
+The backend is configurable at deploy time via environment
+variables:
+
+\begin{lstlisting}[language=bash,numbers=none,caption={LLM configuration in \texttt{docker-compose.yml}.}]
+LLMAAS_API_URL=http://host.docker.internal:8004/v1
+LLMAAS_API_KEY=${LLMAAS_API_KEY}
+LLMAAS_MODEL=${LLMAAS_MODEL:-claude-haiku-4-5-20251001}
+LLMAAS_EMBEDDING_MODEL=all-MiniLM-L6-v2
+LLMAAS_EMBEDDING_DIMENSIONS=1024
+\end{lstlisting}
+
+Swapping or disabling the LLM backend degrades long-term memory
+quality (fewer entities extracted, coarser summaries) but does not
+affect the pipeline's ability to parse, render, push, and verify.
+The deterministic pipeline and the LLM-assisted memory are
+independently testable and independently deployable.
+
+
+%% ===================================================================
+\section{Implementation}\label{sec:impl}
+%% ===================================================================
+
+\subsection{Testbed}\label{sec:impl:testbed}
+
+The prototype runs on a single 12\,GB ARM64 virtual machine (Ubuntu
+24.04, Linux 7.0.0, Python 3.14) with Docker and
+Containerlab~\cite{containerlab}. The lab topology
+(\texttt{clab-ibnlab-switches.yml}) defines 16 containers:
+
+\begin{itemize}
+  \item 3 Nokia SR~Linux (\texttt{ghcr.io/nokia/srlinux:latest},
+    kind \texttt{nokia\_srlinux}, IXR-D2L profile): \texttt{acc-sw-01}
+    (pioneer from Slice~2), \texttt{acc-01}, \texttt{agg-01}.
+  \item 2 FRRouting (\texttt{ibn-frr:local}, custom Debian-slim
+    image, 62\,MB, multi-arch): \texttt{edge-01}, \texttt{edge-02}.
+  \item 4 VyOS firewalls (\texttt{ghcr.io/sysoleg/vyos-container:latest}):
+    \texttt{usf-01}, \texttt{usf-02}, \texttt{dmzfw-01},
+    \texttt{dmzfw-02}.
+  \item 7 host stubs (lightweight Linux containers simulating end
+    hosts in each population VLAN).
+\end{itemize}
+
+The management network is \texttt{192.168.100.0/24}. SR~Linux
+containers expose gNMI on port 57400 and NETCONF on port 830 by
+default. FRR containers run \texttt{zebra}, \texttt{bgpd},
+\texttt{ospfd}, \texttt{ospf6d}, and \texttt{isisd} daemons with
+\texttt{tini} as PID~1. The FRR image is built from a committed
+Dockerfile (\texttt{infra/frr-image/Dockerfile}) to work around
+the upstream \texttt{frrouting/frr} image being amd64-only.
+
+Infrastructure services (Neo4j 5.x, Live-Memory MCP, Graph-Memory
+MCP, Qdrant, Redis) run via \texttt{docker-compose.yml} on the
+same host. Total memory usage with all 16 containers plus
+infrastructure: $\sim$10\,GB, leaving $\sim$1.9\,GB headroom.
+
+
+\subsection{Incremental Delivery: Six Slices}\label{sec:impl:slices}
+
+The implementation was delivered in six incremental slices, each
+building on the previous and each validated with unit tests and a
+live end-to-end run. Table~\ref{tab:slices} summarises the slices.
+
+\begin{table}[t]
+\small
+\centering
+\caption{Six implementation slices: scope, key deliverables, and
+test counts.}
+\label{tab:slices}
+\begin{tabular}{@{}llp{5cm}r@{}}
+\toprule
+\textbf{Slice} & \textbf{Name} & \textbf{Key deliverable} & \textbf{Tests}\\
+\midrule
+1 & HLD Pipeline &
+  HLD parser, A1 ingestion, A2 decomposition, A3 rendering
+  (VyOS only), A4 planning, A5 push via SSH, git hook trigger &
+  52\\
+2 & Multi-vendor &
+  SR~Linux template chain (\texttt{srl\_base}, \texttt{srl\_interfaces},
+  \texttt{srl\_vlans}), \texttt{docker exec sr\_cli} executor,
+  pioneer switch \texttt{acc-sw-01} push &
+  72\\
+3 & Provisioning &
+  Containerlab YAML mutation, \texttt{provision()} and
+  \texttt{retire()}, \texttt{\_KIND\_MAP} dispatch, lifecycle events &
+  86\\
+4 & Approval gate &
+  A4 severity classifier, \texttt{MigrationPlan} node, pending-plan
+  Markdown, approve/reject CLI tool, \texttt{resume\_from\_approval()},
+  auto-approve for LOW/INFO &
+  100\\
+5 & FRR + batch &
+  FRR as third vendor (Dockerfile, 3 templates, vtysh executor),
+  \texttt{provision\_batch()} fix, 4 new devices provisioned,
+  VM resize to 12\,GB &
+  118\\
+7a & gNMI transport &
+  \texttt{pygnmi} executor for SR~Linux, CLI$\rightarrow$YANG
+  translator (10 rules), \texttt{IBN\_SRLINUX\_TRANSPORT} env flag,
+  live \texttt{SetRequest} + verification &
+  140\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Each slice was committed with a plan document
+(\texttt{PLAN\_Slice<N>.md}) before implementation and a fix-notes
+document (\texttt{FIX\_NOTES\_Slice<N>.md}) after, capturing bugs
+found, fixes applied, architectural decisions made during execution,
+and known limitations. This convention was adopted after Slice~2 and
+applied retroactively; it provides a readable post-mortem record
+that survives outside the development conversation log.
+
+
+\subsection{Failure Modes and Fixes}\label{sec:impl:failures}
+
+Several non-trivial failures were encountered and resolved during
+implementation:
+
+\begin{description}
+  \item[MCP hang on Python 3.14.]
+    The \texttt{asyncio.run()} call hung in teardown after the MCP
+    \texttt{streamablehttp\_client} context manager exited, due to
+    an \texttt{anyio} TaskGroup orphan-task bug. After evaluating
+    factory patterns, \texttt{asyncio.wait\_for}, and
+    \texttt{ThreadPoolExecutor} (all of which also hung), the fix was
+    a persistent background event loop in a daemon thread with
+    \texttt{asyncio.run\_coroutine\_threadsafe()}. This pattern is
+    now used by both \texttt{LiveMemoryClient} and
+    \texttt{GraphMemoryClient}.
+
+  \item[Batch provisioning timeout.]
+    Per-device \texttt{clab deploy --reconfigure} re-processes the
+    entire topology on each invocation. With four new devices, the
+    third sequential deploy exceeded the 300\,s timeout. The fix
+    (\texttt{provision\_batch()}) performs a single YAML write and
+    a single deploy for the entire batch, completing in $\sim$10\,s.
+
+  \item[FRR ARM64 mismatch.]
+    The upstream \texttt{frrouting/frr:latest} image is amd64-only
+    and crashes under QEMU on the ARM64 host. The fix was a custom
+    \texttt{ibn-frr:local} image built from
+    \texttt{debian:stable-slim} + \texttt{apt install frr}
+    (62\,MB, native ARM64).
+
+  \item[Neo4j OOM under memory pressure.]
+    On the original 8\,GB host, Neo4j was OOM-killed (exit~137)
+    when the fifth SR~Linux container came up alongside four VyOS
+    firewalls. The host was resized to 12\,GB, which provides
+    $\sim$4\,GB free after all containers and infrastructure.
+
+  \item[Graph-Memory MCP schema mismatch.]
+    The \texttt{GraphMemoryClient} initially sent field names that
+    did not match the MCP server's expected schema (\texttt{name}
+    instead of \texttt{memory\_id}, \texttt{content} instead of
+    \texttt{content\_base64}). The \texttt{LLMAAS\_API\_URL} was
+    also missing the \texttt{/v1} path prefix. Both were fixed by
+    reading the server's OpenAPI spec and aligning field names.
+\end{description}
+
+
+\subsection{Measurements}\label{sec:impl:measurements}
+
+\begin{table}[t]
+\small
+\centering
+\caption{Pipeline timing for representative operations.}
+\label{tab:timing}
+\begin{tabular}{@{}lr@{}}
+\toprule
+\textbf{Operation} & \textbf{Wall-clock time}\\
+\midrule
+No-op HLD commit (full cycle) & 8--10\,s\\
+VLAN addition (1 device affected) & 10--12\,s\\
+Device addition (4 devices, batch) & 20--40\,s\\
+gNMI SetRequest (7 updates) & $<$1\,s\\
+sr\_cli push (typical) & $\sim$2\,s\\
+vtysh push (typical) & $\sim$1.5\,s\\
+SSH push to VyOS & $\sim$3\,s\\
+Neo4j Cypher query (avg of 10 A3 queries) & $\sim$200\,ms\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+%% ===================================================================
+\section{Discussion and Related Work}\label{sec:discuss}
+%% ===================================================================
+
+\subsection{Comparison with Vendor IBN Suites}
+
+Cisco DNA Center, Juniper Apstra, and Arista CloudVision all
+implement forms of closed-loop intent, but they share three
+properties our system avoids:
+
+\begin{enumerate}
+  \item \textbf{Vendor lock-in.} Each system manages only its own
+    vendor's devices. Our dispatch-table architecture supports three
+    vendors (VyOS, SR~Linux, FRR) with a fourth (Arista cEOS)
+    requiring only a new dispatch entry and template chain.
+
+  \item \textbf{Proprietary intent model.} Intent is authored in
+    a vendor-specific GUI or API; it cannot be diffed, branched,
+    or code-reviewed with standard tooling. Our intent is a
+    Markdown file under \texttt{git}.
+
+  \item \textbf{Opaque state.} The internal state model is not
+    directly queryable by operators. Our Neo4j SSoT with its
+    nine-layer ontology is fully queryable via Cypher, and every
+    agent write is dual-sinked to Live-Memory for rationale
+    capture.
+\end{enumerate}
+
+\subsection{Relationship to MALT}
+
+Google's MALT~\cite{malt} introduced the concept of modelling
+network topologies at multiple levels of abstraction, driven by
+the observation that no single abstraction level serves all
+consumers. Our nine-layer ontology is directly inspired by MALT
+but differs in scope: MALT focuses on topology abstraction for
+traffic engineering in a homogeneous datacentre; our ontology spans
+the full IBN lifecycle (from business intent through deployment
+to compliance) in a heterogeneous multi-vendor campus. The five
+concurrent model states extend MALT's abstraction-level concept
+with temporal semantics: the same intent exists simultaneously as
+\texttt{CANDIDATE}, \texttt{POR}, \texttt{DEPLOYED}, and
+\texttt{AS\_BUILT}, each reflecting a different point in the
+fulfilment lifecycle.
+
+\subsection{GitOps for Networks}
+
+The GitOps pattern---declarative desired state in a Git repository,
+reconciled by an automated operator---is well-established for
+Kubernetes~(Flux, ArgoCD) but less explored for network
+infrastructure. Network-to-Code's Nautobot and Netbox provide
+source-of-truth databases but do not close the loop: they record
+intent but do not render, push, or verify. Our system closes the
+loop end-to-end: the HLD commit triggers rendering, the approval
+gate provides human oversight, and the assurance loop detects
+drift and auto-remediates.
+
+\subsection{YANG and NETCONF/gNMI}
+
+The move from CLI-based config push to schema-validated gNMI
+(Slice~7a) aligns with the broader industry trend toward
+model-driven management~\cite{gnmi}. Our experience confirms
+that gNMI's structured \texttt{SetRequest} semantics (atomic
+commit, typed paths, JSON-IETF encoding) are a better fit for
+programmatic push than piping CLI commands through
+\texttt{docker exec}. The narrow CLI$\rightarrow$YANG translator
+(\texttt{\_srlinux\_yang.py}) is a pragmatic compromise: it keeps
+the A3 template chain transport-agnostic (the same \texttt{set /}
+commands feed both the CLI and gNMI paths) while the translator
+absorbs the encoding difference. A future slice (7c) will render
+OpenConfig JSON directly, eliminating the translation step.
+
+\subsection{Lessons Learned}
+
+\begin{enumerate}
+  \item \textbf{The HLD-as-intent commitment is viable but
+    demanding.} The HLD must be structured enough for a
+    deterministic parser to extract typed records. In practice
+    this means the Device Inventory Table and VLAN assignment
+    tables must follow a fixed Markdown table format. Prose
+    sections (design rationale, capacity planning) are not parsed
+    but are preserved in Live-Memory notes for future LLM-driven
+    extraction.
+
+  \item \textbf{Batch provisioning matters.} The per-device
+    \texttt{clab deploy --reconfigure} path scales quadratically
+    with topology size because each invocation re-processes the
+    entire YAML. The batch path (one write, one deploy) reduces
+    this to constant time for the deploy step.
+
+  \item \textbf{Three tiers are the right number.} Early designs
+    considered a two-tier model (Neo4j + LLM-backed knowledge).
+    The working-memory tier (Live-Memory) turned out to be
+    essential: agents need a fast, low-latency scratchpad for
+    intra-cycle communication that is richer than Neo4j properties
+    but cheaper than a full knowledge-graph ingestion.
+
+  \item \textbf{LLMs belong in the memory tier, not the pipeline.}
+    Every attempt to introduce LLM inference into the pipeline
+    (e.g.\ LLM-based policy decomposition in A2, LLM-based
+    template selection in A3) degraded cycle time by 10--30$\times$
+    and introduced non-determinism that broke idempotency
+    invariants. The current separation---deterministic pipeline,
+    LLM-assisted memory---is a deliberate architectural choice,
+    not a limitation.
+
+  \item \textbf{Dispatch tables scale better than inheritance.}
+    The vendor-extensibility pattern (one table entry per vendor)
+    has proven more maintainable than a class-hierarchy approach.
+    Adding FRR as a third vendor touched exactly one line per
+    dispatch table plus a Dockerfile and three Jinja2 templates;
+    no existing code was modified.
+\end{enumerate}
+
+
+%% ===================================================================
+\section{Conclusion}\label{sec:conclusion}
+%% ===================================================================
+
+We have presented an Intent-Based Networking closed-loop control
+system that treats a conventional Markdown High-Level Design
+document as the sole source of intent, triggered by \texttt{git
+commit} and reconciled to live network state through a pipeline of
+ten specialised agents grounded in RFC~9315. The system is backed
+by a Neo4j knowledge graph with a nine-layer ontology and five
+concurrent model states, a three-tier memory architecture that
+cleanly separates structured state, working memory, and long-term
+knowledge, and a dispatch-table-driven multi-vendor rendering and
+push pipeline supporting VyOS, Nokia SR~Linux (via both CLI and
+gNMI), and FRRouting.
+
+The implementation was delivered incrementally across six slices on
+a live Containerlab testbed with 16 nodes, validated by 140 unit
+tests with zero cross-slice regressions, and operates with a
+full-cycle time of 8--10\,seconds. The core pipeline is entirely
+deterministic and LLM-free; large language models are used
+exclusively for memory consolidation and knowledge extraction,
+preserving the system's correctness properties while enabling
+rich operational knowledge capture.
+
+The key architectural insight is that the gap between an HLD and a
+running network is not a translation problem that requires a
+proprietary controller---it is a reconciliation problem that can be
+decomposed into narrow, testable agents operating over a shared
+graph, triggered by the same version-control tooling that
+developers already use. The HLD is not a specification of intent
+that must be re-encoded into a machine format; it \emph{is} the
+intent, and the closed loop's job is to make reality match it.
+
+\paragraph{Future work.}
+Immediate next steps include: NETCONF-over-SSH transport for
+SR~Linux (Slice~7b), OpenConfig shared templates across vendors
+(Slice~7c), gNMI streaming telemetry for sub-second inner-loop
+monitoring (Slice~7d), and full implementation of Agents~9 and~10
+for abstraction and human-facing reporting. Longer-term, we plan
+to evaluate predictive drift detection using Graph-Memory's
+historical knowledge base and to extend the testbed to include
+Arista cEOS and Juniper cRPD.
+
+
+%% --------- bibliography ---------
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{refs}
+
+\end{document}
