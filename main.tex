@@ -42,10 +42,6 @@
 \acmArticle{1}
 \acmYear{2026}
 \acmMonth{4}
-
-%% Override the journal short/long name for our pre-submission draft
-\renewcommand{\acmJournalShort}{IBN-CL}
-\renewcommand{\acmJournalLong}{IBN Closed-Loop}
 \copyrightyear{2026}
 \acmDOI{}
 \acmISBN{}
@@ -325,7 +321,7 @@ make three additional architectural commitments:
     devices, decommissions, policy scope changes) are gated by an
     explicit approval step between Agent~4 (Planning) and Agent~5
     (Orchestration). The approval artefact is a Markdown file
-    deposited under \texttt{.git/ibn-pending-approval/<sha>.md}
+    deposited under \texttt{.git/\allowbreak{}ibn-pending-approval/\allowbreak{}<sha>.md}
     containing the severity classification, blast radius, affected
     devices, and a forward/inverse summary of the planned change. An
     operator approves by running \texttt{python -m ibn.tools.approve
@@ -485,7 +481,7 @@ _KIND_MAP = {
   \item \textbf{Approval gate.}
     If severity is \texttt{HIGH} (device additions or removals), the
     pipeline deposits a Markdown summary under
-    \texttt{.git/ibn-pending-approval/<sha>.md} and halts. The
+    \texttt{.git/\allowbreak{}ibn-pending-approval/\allowbreak{}<sha>.md} and halts. The
     summary contains: severity, blast radius, affected device list,
     forward and inverse summaries, and the command to approve. The
     operator reviews and runs:
