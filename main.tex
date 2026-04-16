@@ -11,10 +11,15 @@
 \usepackage{tikz}
 \usepackage{enumitem}
 \usepackage{tabularx}
+\usepackage{float}
 \usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit,calc}
 
+%% Allow line breaks in \texttt at underscores, dots, slashes, hyphens
+\renewcommand\_{\textunderscore\allowbreak}
+\newcommand{\tcode}[1]{{\small\texttt{#1}}}
+
 \lstset{
-  basicstyle=\small\ttfamily,
+  basicstyle=\footnotesize\ttfamily,
   breaklines=true,
   frame=single,
   xleftmargin=0pt,
@@ -22,6 +27,10 @@
   numbers=left,
   numberstyle=\tiny\color{gray},
 }
+
+%% Global: allow slightly looser line-breaking in two-column mode
+\tolerance=1500
+\emergencystretch=1em
 
 %% --------- suppress ACM-specific fields (pre-submission draft) ---------
 \setcopyright{none}
@@ -290,7 +299,7 @@ make three additional architectural commitments:
   \item \textbf{A single external trigger.} The only event that
     enters the system from outside is \texttt{git commit} on the HLD
     repository. A \texttt{post-commit} hook invokes the pipeline entry
-    point \texttt{HldCommitPipeline.run(commit, hld\_path)}, which is
+    point \texttt{HldCommit\-Pipeline.run(\allowbreak commit, hld\_path)}, which is
     the sole supported way to start a fulfilment cycle. The hook
     runs the pipeline in a background process, emits a banner to the
     terminal (\texttt{[ibn-hook] HLD changed in <sha>}), and deposits
@@ -329,8 +338,8 @@ make three additional architectural commitments:
 \subsection{Trigger-to-Push Pipeline}\label{sec:cl:pipeline}
 
 When a \texttt{git commit} touches the HLD file
-(\texttt{Enterprise\_Campus\_Network\_HLD.md}), the \texttt{post-commit}
-hook spawns \texttt{HldCommitPipeline.run(commit\_sha, hld\_path)}.
+(\texttt{Enterprise\_Campus\_\allowbreak{}Network\_HLD.md}), the \texttt{post-commit}
+hook spawns \texttt{HldCommit\-Pipeline.run(\allowbreak commit\_sha,\allowbreak{} hld\_path)}.
 The pipeline carries out twelve stages in order; each stage is
 described below with its agent, inputs, outputs, and the Neo4j layer
 it writes to.
@@ -476,7 +485,7 @@ python -m ibn.tools.approve <sha>
     \texttt{MigrationPlan} from \texttt{PENDING} to \texttt{APPROVED},
     records the operator identity and timestamp, cleans up the pending
     Markdown, and invokes
-    \texttt{HldCommitPipeline.resume\_from\_approval(plan\_id)}.
+    \texttt{HldCommit\-Pipeline.\allowbreak{}resume\_from\_approval(\allowbreak{}plan\_id)}.
 
     For \texttt{LOW}/\texttt{INFO} severity, the gate auto-approves
     (configurable via \texttt{IBN\_AUTO\_APPROVE=1} for test
@@ -600,7 +609,7 @@ def _resolve_executor(platform):
     \texttt{NON\_COMPLIANT}, \texttt{UNKNOWN}) and a compliance
     percentage. For non-compliant verdicts, a root-cause tracer
     traverses the dependency graph (via
-    \texttt{REALIZED\_BY}/\texttt{AGGREGATES} edges) to identify
+    \texttt{REALIZED\_BY}/\allowbreak\texttt{AGGREGATES} edges) to identify
     the causal chain and assigns a confidence level
     (\texttt{HIGH} or \texttt{LOW}).
 
@@ -1051,8 +1060,8 @@ provides: Neo4j and Live-Memory client injection, a
 a typed \texttt{\_execute(**kwargs) -> dict} contract that each
 agent overrides.
 
-\begin{table}[t]
-\small
+\begin{table*}[t]
+\footnotesize
 \centering
 \caption{The ten agents: line counts, primary inputs, outputs, and
 write layers. Line counts are for the agent module only, excluding
@@ -1062,19 +1071,19 @@ shared infrastructure.}
 \toprule
 \textbf{Agent} & \textbf{Name} & \textbf{Lines} & \textbf{RFC} & \textbf{Input} & \textbf{Output}\\
 \midrule
-A1 & Ingestion          & 584 & \S5.1.1 & HldChangeset     & Intent, Device, VLAN\\
-A2 & Intent$\rightarrow$Policy    & 221 & \S5.1.2 & Intent IDs       & Policy, FirewallRule\\
-A3 & Policy$\rightarrow$Config    & 420 & \S5.1.2 & Neo4j context    & Configuration\\
-A4 & Planning           & 243 & \S5.1.2 & Changeset+configs & MigrationPlan\\
-A5 & Orchestration      & 350 & \S5.1.3 & Configuration    & DeploymentEvent\\
-A6 & Monitoring         & 380 & \S5.2.1 & Device list      & Telemetry, OpState\\
-A7 & Assessment         & 417 & \S5.2.2 & POR vs As-Built  & Assessment, Incident\\
-A8 & Action             & 405 & \S5.2.3 & Incident         & Remediation\\
-A9 & Abstraction        & --- & \S5.2   & Assessments      & Aggregated scores\\
-A10& Reporting          & --- & \S5.2   & Aggregations     & Reports\\
+A1 & Ingestion              & 584 & \S5.1.1 & HldChangeset      & Intent, Device, VLAN\\
+A2 & Intent$\rightarrow$Policy        & 221 & \S5.1.2 & Intent IDs        & Policy, FirewallRule\\
+A3 & Policy$\rightarrow$Config        & 420 & \S5.1.2 & Neo4j context     & Configuration\\
+A4 & Planning               & 243 & \S5.1.2 & Changeset+configs & MigrationPlan\\
+A5 & Orchestration          & 350 & \S5.1.3 & Configuration     & DeploymentEvent\\
+A6 & Monitoring             & 380 & \S5.2.1 & Device list       & Telemetry, OpState\\
+A7 & Assessment             & 417 & \S5.2.2 & POR vs As-Built   & Assessment, Incident\\
+A8 & Action                 & 405 & \S5.2.3 & Incident          & Remediation\\
+A9 & Abstraction            & --- & \S5.2   & Assessments       & Aggregated scores\\
+A10& Reporting              & --- & \S5.2   & Aggregations      & Reports\\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
 The total implementation of the eight active agents (A1--A8) is
 3,020~lines of Python. Adding A9 and A10 (currently stubs) will
@@ -1395,13 +1404,13 @@ The implementation was delivered in six incremental slices, each
 building on the previous and each validated with unit tests and a
 live end-to-end run. Table~\ref{tab:slices} summarises the slices.
 
-\begin{table}[t]
-\small
+\begin{table*}[t]
+\footnotesize
 \centering
 \caption{Six implementation slices: scope, key deliverables, and
 test counts.}
 \label{tab:slices}
-\begin{tabular}{@{}llp{5cm}r@{}}
+\begin{tabularx}{\textwidth}{@{}llXr@{}}
 \toprule
 \textbf{Slice} & \textbf{Name} & \textbf{Key deliverable} & \textbf{Tests}\\
 \midrule
@@ -1410,32 +1419,32 @@ test counts.}
   (VyOS only), A4 planning, A5 push via SSH, git hook trigger &
   52\\
 2 & Multi-vendor &
-  SR~Linux template chain (\texttt{srl\_base}, \texttt{srl\_interfaces},
-  \texttt{srl\_vlans}), \texttt{docker exec sr\_cli} executor,
-  pioneer switch \texttt{acc-sw-01} push &
+  SR~Linux template chain (srl\_base, srl\_interfaces,
+  srl\_vlans), docker exec sr\_cli executor,
+  pioneer switch acc-sw-01 push &
   72\\
 3 & Provisioning &
-  Containerlab YAML mutation, \texttt{provision()} and
-  \texttt{retire()}, \texttt{\_KIND\_MAP} dispatch, lifecycle events &
+  Containerlab YAML mutation, provision() and
+  retire(), \_KIND\_MAP dispatch, lifecycle events &
   86\\
 4 & Approval gate &
-  A4 severity classifier, \texttt{MigrationPlan} node, pending-plan
-  Markdown, approve/reject CLI tool, \texttt{resume\_from\_approval()},
+  A4 severity classifier, MigrationPlan node, pending-plan
+  Markdown, approve/reject CLI tool, resume\_from\_approval(),
   auto-approve for LOW/INFO &
   100\\
 5 & FRR + batch &
   FRR as third vendor (Dockerfile, 3 templates, vtysh executor),
-  \texttt{provision\_batch()} fix, 4 new devices provisioned,
+  provision\_batch() fix, 4 new devices provisioned,
   VM resize to 12\,GB &
   118\\
 7a & gNMI transport &
-  \texttt{pygnmi} executor for SR~Linux, CLI$\rightarrow$YANG
-  translator (10 rules), \texttt{IBN\_SRLINUX\_TRANSPORT} env flag,
-  live \texttt{SetRequest} + verification &
+  pygnmi executor for SR~Linux, CLI$\rightarrow$YANG
+  translator (10 rules), IBN\_SRLINUX\_TRANSPORT env flag,
+  live SetRequest + verification &
   140\\
 \bottomrule
-\end{tabular}
-\end{table}
+\end{tabularx}
+\end{table*}
 
 Each slice was committed with a plan document
 (\texttt{PLAN\_Slice<N>.md}) before implementation and a fix-notes
