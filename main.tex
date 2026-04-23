@@ -1563,6 +1563,92 @@ properties our system avoids:
     capture.
 \end{enumerate}
 
+\subsection{Cloud-Temple's Live-Memory and Graph-Memory}
+
+Tiers~2 and~3 of our memory architecture are built on two
+open-source projects developed by Cloud-Temple (Apache~2.0
+licence): \textbf{Live-Memory}~\cite{livememory} and
+\textbf{Graph-Memory}~\cite{graphmemory}. Both are exposed as
+MCP (Model Context Protocol) Streamable HTTP servers and were
+designed for multi-agent LLM collaboration, following the
+framework described by Tran et~al.~\cite{tran2025}.
+
+\paragraph{Live-Memory} provides a dual-mode working memory
+system: a \emph{Live} mode for real-time, append-only note
+capture (the \texttt{live\_note()} calls used by every agent),
+and a \emph{Bank} mode for LLM-consolidated structured
+documentation. Notes accumulate in per-space banks backed by S3
+object storage; when a consolidation trigger fires (model-state
+transition, note-count threshold, or inner-loop completion), the
+server invokes an LLM to summarise the accumulated notes into a
+structured Markdown bank file. The bank files are the input to
+Tier~3. Live-Memory's space model maps naturally onto our
+five-state lifecycle: each model state gets a dedicated space
+(\texttt{ibn-candidate-*}, \texttt{ibn-por-*}, etc.), plus two
+loop-scoped spaces (\texttt{ibn-loop-inner},
+\texttt{ibn-loop-outer}). This separation ensures that
+consolidation is scoped to the phase that produced the notes,
+avoiding cross-contamination between, say, planning-phase
+reasoning and deployment-phase observations.
+
+\paragraph{Graph-Memory} implements a ``Knowledge Graph as a
+Service'' pattern: ontology-driven LLM extraction of typed
+entities and relationships from natural-language documents,
+stored in a namespace-isolated Neo4j graph
+(\texttt{IBN\_LIFECYCLE\_*} labels) with BGE-M3 1024-dimension
+vector embeddings in Qdrant. Three capabilities are central to
+our architecture:
+
+\begin{itemize}
+  \item \textbf{Ontology-driven extraction.} Graph-Memory
+    accepts a YAML-defined ontology that constrains the entity
+    and relationship types the LLM can produce during
+    ingestion. Our IBN Lifecycle Ontology (472~lines, 14~entity
+    classes, 8~relationship types --- see
+    Section~\ref{sec:memory:ontology}) guides extraction so
+    that, for example, a note mentioning ``drift detected on
+    VLAN~110'' produces a typed \texttt{DriftEvent} entity
+    linked via \texttt{CAUSED\_BY} to the relevant
+    \texttt{RootCauseAnalysis}, rather than a generic text
+    chunk.
+
+  \item \textbf{Namespace isolation.} Each Graph-Memory
+    ``memory'' gets prefixed Neo4j labels, ensuring complete
+    isolation from the SSoT's nine-layer ontology operating in
+    the same Neo4j instance. The SSoT graph and the knowledge
+    graph coexist without schema interference.
+
+  \item \textbf{Graph-guided RAG.} When an agent queries
+    Graph-Memory via \texttt{question\_answer()}, the system
+    first identifies relevant entities through fuzzy and
+    semantic search in Neo4j, then constrains the Qdrant vector
+    search to only those source documents. This produces
+    precise, context-filtered answers rather than the noisy
+    results typical of pure vector RAG.
+\end{itemize}
+
+Cloud-Temple also provides the \textbf{LLMaaS} (LLM as a
+Service) API endpoint used by both Live-Memory and Graph-Memory
+for consolidation and entity extraction. The current testbed
+defaults to Claude Haiku~4.5 via Cloud-Temple's LLMaaS proxy
+(\texttt{api.ai.cloud-temple.com}), with Qwen3-235B as an
+alternative hosted on the same infrastructure. The LLMaaS
+endpoint is OpenAI-API-compatible, so swapping models or
+providers requires only changing the \texttt{LLMAAS\_MODEL}
+environment variable.
+
+The contribution of Live-Memory and Graph-Memory to this work
+is structural: they provide the working-memory and long-term
+knowledge tiers that, together with Neo4j, realise the
+three-tier separation of \emph{what is}, \emph{why it is so},
+and \emph{what was learned}. Without these tiers, the pipeline
+would still render and push configuration, but the operational
+rationale behind each agent decision would be lost, and the
+system could not answer historical queries like ``what happened
+last time we saw VLAN~110 latency spikes?'' with typed,
+graph-grounded answers.
+
+
 \subsection{Relationship to MALT}
 
 Google's MALT~\cite{malt} introduced the concept of modelling
