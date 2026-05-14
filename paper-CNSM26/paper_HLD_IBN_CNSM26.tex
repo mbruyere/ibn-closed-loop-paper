@@ -1,0 +1,306 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{enumitem}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\begin{document}
+
+% Working draft for CNSM 2026.
+% Editorial direction:
+% - focus on the scientific claim: HLD-driven bootstrap of a network from T0
+% - keep multi-agent / graph / memory as implementation means, not headline claims
+% - integrate related work inside Section II to stay compatible with the 9-page limit
+
+\title{HLD-as-Source-of-Intent: Bootstrapping Intent-Based Networks from High-Level Design}
+
+\author{
+\IEEEauthorblockN{Marc Bruy\`ere-Yamada}
+\IEEEauthorblockA{
+\textit{T\'el\'ecom SudParis} \\
+\textit{JFLI} \\
+France / Japan \\
+email TBD
+}
+\and
+\IEEEauthorblockN{Co-authors TBD}
+\IEEEauthorblockA{
+\textit{Affiliations TBD} \\
+email TBD
+}
+}
+
+\maketitle
+
+\begin{abstract}
+Intent-Based Networking (IBN) is usually studied as an operational layer applied to an already deployed network \cite{}. This draft paper argues that the same intent-centric reasoning can be pushed earlier in the lifecycle, using a High-Level Design (HLD) document as the initial source of intent for bootstrapping a network from design to first deployment. We target small and medium enterprise networks and propose a closed-loop workflow that ingests an HLD, derives implementation artefacts, validates them in a lab or digital-twin environment, and produces a first operational network with human approval at critical steps \cite{}. The prototype relies on an agentic orchestration harness, a structured source of truth, and vendor-aware rendering, but these are implementation choices rather than the paper's primary claim. The main contribution is the scientific positioning of ``HLD-as-intent'' at time zero, its grounding in IBN concepts from RFC~9315 and RFC~9316 \cite{}, and an evaluation methodology across multiple HLD instances compatible with CNSM's focus on automation, intent, and agentic intelligence.
+\end{abstract}
+
+\begin{IEEEkeywords}
+intent-based networking, high-level design, network automation, closed-loop management, network design, digital twin, agentic systems
+\end{IEEEkeywords}
+
+\section{Introduction}
+
+Intent-Based Networking (IBN) is most often introduced once a network already exists: operators define intents for a running infrastructure, and the system translates them into operational actions such as deployment, assurance, and remediation \cite{}. In practice, however, enterprise networks start earlier with human-written design artefacts: requirement documents, architecture decisions, and especially High-Level Designs (HLDs). This paper asks whether that HLD can become the first machine-actionable source of intent.
+
+\begin{itemize}[leftmargin=*,noitemsep,topsep=2pt]
+\item \textbf{Problem statement.} There is a gap between the HLD, which captures architecture and rationale, and the deployed network, which is usually produced through manual, vendor-specific implementation steps.
+\item \textbf{Scientific angle.} Existing IBN work largely emphasizes operation on an existing network; we instead focus on the \emph{T0} phase, where no network exists yet and the challenge is to bootstrap a first operational state from design-time intent \cite{}.
+\item \textbf{Working concept.} We treat this early-stage intent as a form of ``Intent Zero'': intent before operations, before assurance, and before the network has become a managed object.
+\item \textbf{Scope choice.} This paper deliberately limits itself to design-to-initial-deployment. A later operational IBN loop may coexist with this approach, but is not the primary object of study here.
+\end{itemize}
+
+The paper is built around the following claim: an HLD, provided in a structured and parsable form, can act as the initial source of intent for an end-to-end workflow that produces a first deployable network configuration, validates it in a controlled environment, and prepares a network for subsequent operation and management.
+
+\subsection{Draft Contributions}
+
+\begin{itemize}[leftmargin=*,noitemsep,topsep=2pt]
+\item \textbf{C1.} A reframing of IBN from \emph{operations on an existing network} to \emph{bootstrapping a network from an HLD}.
+\item \textbf{C2.} A lifecycle view that positions the HLD as the earliest explicit intent artefact, bridging design, dimensioning, implementation planning, and initial deployment.
+\item \textbf{C3.} A prototype closed-loop workflow, grounded in RFC terminology, that transforms HLD information into deployment artefacts, validation steps, and as-built feedback \cite{}.
+\item \textbf{C4.} An evaluation methodology based on multiple SME HLDs, vendor and constraint profiles, and human-in-the-loop checkpoints.
+\end{itemize}
+
+\subsection{Paper Structure}
+
+\begin{itemize}[leftmargin=*,noitemsep,topsep=2pt]
+\item Section~II provides background, motivation, and the positioning against related work.
+\item Section~III presents the proposition at a high level.
+\item Section~IV details the input model, workflow, and implementation choices.
+\item Section~V defines the experimental evaluation plan.
+\item Section~VI discusses scope boundaries, limitations, and implications.
+\item Section~VII concludes.
+\end{itemize}
+
+\section{Background and Motivation}
+
+\subsection{Network Lifecycle and the Role of HLD}
+
+\begin{itemize}[leftmargin=*,noitemsep,topsep=2pt]
+\item Typical lifecycle: business needs $\rightarrow$ requirements $\rightarrow$ architecture $\rightarrow$ HLD $\rightarrow$ LLD $\rightarrow$ implementation planning $\rightarrow$ deployment $\rightarrow$ validation $\rightarrow$ operations.
+\item In current engineering practice, the HLD is often authoritative for humans but inert for machines.
+\item The HLD usually contains the architectural intent that matters most at T0:
+site structure, service zones, segmentation goals, interconnection principles, resilience expectations, and acceptance criteria.
+\item The translation from HLD to device-ready artefacts remains costly, manual, and error-prone in multi-vendor contexts \cite{}.
+\end{itemize}
+
+\subsection{IBN Concepts Relevant to This Paper}
+
+\begin{itemize}[leftmargin=*,noitemsep,topsep=2pt]
+\item RFC~9315 defines IBN as a closed-loop system that converts high-level intent into network behavior and continuously checks conformance \cite{}.
+\item RFC~9315 also distinguishes an inner control loop and an outer human loop; this distinction is useful here, but our paper concentrates on the earliest fulfilment stages rather than steady-state operation \cite{}.
+\item RFC~9316 can be used to clarify what kind of intent is involved in this paper:
+business intent, service intent, resource intent, and the transformations between them \cite{}.
+\item One key question for the paper is therefore not only ``what is intent?'', but also ``at what point in the lifecycle does intent become operationally actionable?''.
+\end{itemize}
+
+\subsection{Related Work and Research Gap}
+
+\begin{itemize}[leftmargin=*,noitemsep,topsep=2pt]
+\item \textbf{Classical IBN literature and platforms.} Most approaches assume an already deployed network and focus on policy translation, closed-loop assurance, or service steering \cite{}.
+\item \textbf{Recent CNSM/NOMS work.} Existing work covers intent translation, traffic steering, NFV or Kubernetes deployment, and KPI assurance with LLMs, but does not clearly address the HLD-to-network bootstrap problem \cite{}.
+\item \textbf{MALT-inspired abstraction.} Multi-layer modelling work such as MALT helps justify the need for several abstraction levels across a network lifecycle, but does not provide an open demonstrator for turning HLD content into an initial running network \cite{}.
+\item \textbf{Gap.} We did not identify a clear scientific treatment of HLD-as-source-of-intent for initial network realization from a white-field starting point.
+\item \textbf{Positioning.} Our paper is therefore closer to \emph{design-time IBN} or \emph{Intent Zero} than to classical operational IBN.
+\end{itemize}
+
+\section{Proposition: Overview}
+
+% Figure idea:
+% end-to-end view from HLD -> normalized intent -> implementation artefacts
+% -> lab/digital twin deployment -> validation -> first operational network.
+
+\subsection{Core Proposition}
+
+\begin{itemize}[leftmargin=*,noitemsep,topsep=2pt]
+\item \textbf{Input.} A structured HLD describing the target SME network, possibly complemented by explicit technology constraints.
+\item \textbf{Output.} A first validated network realization: topology artefacts, vendor-aware configurations, deployment plan, and as-built feedback.
+\item \textbf{Central hypothesis.} A sufficiently structured HLD can serve as the first formalized intent artefact without requiring an operator to re-enter the same intent into a separate controller-specific model.
+\item \textbf{Boundary.} The paper does not claim to solve the whole lifecycle; it addresses the transition from design intent to first deployable and validated network state.
+\end{itemize}
+
+\subsection{Closed-Loop View}
+
+\begin{itemize}[leftmargin=*,noitemsep,topsep=2pt]
+\item Step 1: ingest and parse the HLD into structured design objects.
+\item Step 2: normalize those objects into an internal intent representation.
+\item Step 3: derive policy, topology, addressing, segmentation, and implementation artefacts.
+\item Step 4: validate the result in a lab or digital-twin environment before production push \cite{}.
+\item Step 5: generate deployment and validation outputs for human review when changes are high impact.
+\item Step 6: feed the observed result back into an as-built view that can later support operations.
+\end{itemize}
+
+\subsection{Why a Closed Loop at T0?}
+
+\begin{itemize}[leftmargin=*,noitemsep,topsep=2pt]
+\item Because design artefacts and implementation artefacts drift even before the network enters normal operation.
+\item Because a design-time loop can catch mismatches early:
+missing constraints, unsupported vendor features, invalid topology assumptions, and inconsistent security intent.
+\item Because a digital twin or lab validation stage can reduce the risk of turning an HLD directly into production changes \cite{}.
+\item Because this first loop can later hand over a cleaner, better documented network to a classical operational IBN loop.
+\end{itemize}
+
+\section{Details}
+
+\subsection{Input Model: HLD or Structured Input File}
+
+\begin{itemize}[leftmargin=*,noitemsep,topsep=2pt]
+\item Current working assumption: the entry artefact is still called an HLD, but it must contain structured sections that are parsable and reproducible.
+\item Candidate sections:
+scope, sites, zones, topology intent, addressing, segmentation, external connectivity, security rules, critical services, vendor or platform constraints, validation expectations.
+\item Open design choice to discuss in the paper:
+whether technology constraints belong inside the HLD or in a companion constraint file.
+\item Candidate formalizations to compare in the future:
+Markdown with tables, PlantUML, Mermaid, or another machine-readable design notation \cite{}.
+\end{itemize}
+
+\subsection{Transformation Workflow}
+
+\begin{itemize}[leftmargin=*,noitemsep,topsep=2pt]
+\item \textbf{Design parsing.} Extract structured entities and relations from the HLD.
+\item \textbf{Intent normalization.} Convert raw HLD content into a stable internal representation that distinguishes invariant design choices from platform-dependent constraints.
+\item \textbf{Policy and topology derivation.} Produce network intents such as segmentation, reachability, redundancy, and service exposure.
+\item \textbf{Implementation synthesis.} Render vendor-aware artefacts, low-level configurations, topology descriptors, and deployment plans.
+\item \textbf{Validation.} Deploy in Containerlab or an equivalent environment, execute validation checks, and collect discrepancies.
+\item \textbf{As-built feedback.} Record the realized state and discrepancies to support traceability and later operation.
+\end{itemize}
+
+\subsection{Prototype Realization Choices}
+
+\begin{itemize}[leftmargin=*,noitemsep,topsep=2pt]
+\item The current prototype uses an agentic orchestration harness to decompose the workflow into specialized tasks.
+\item The present draft intentionally treats this multi-agent decomposition as a \emph{means of realization}, not as the paper's main scientific claim.
+\item A graph-backed source of truth helps preserve cross-layer relations between design objects, implementation artefacts, deployment state, and validation results \cite{}.
+\item Additional memory layers can be useful for rationale capture, traceability, and human interaction, but should remain secondary in the paper narrative.
+\item Vendor-specific rendering and deployment backends are required to demonstrate that the approach is not limited to a single platform \cite{}.
+\end{itemize}
+
+\subsection{Human-in-the-Loop and Governance}
+
+\begin{itemize}[leftmargin=*,noitemsep,topsep=2pt]
+\item The workflow should remain largely automated for low-risk transformations.
+\item A human checkpoint is required for high-impact changes:
+new devices, topology modifications, security-sensitive exposure, or unresolved implementation ambiguity.
+\item One evaluation dimension is therefore not only technical correctness, but also the \emph{amount and type of human intervention} still required.
+\item This is also where closed-vendor documentation, unsupported models, or ambiguous HLD wording become visible.
+\end{itemize}
+
+\section{Experimental Evaluation}
+
+% Table idea:
+% HLD scenarios, vendor profiles, constraints, expected services, and outcomes.
+
+\subsection{Objectives and Research Questions}
+
+\begin{itemize}[leftmargin=*,noitemsep,topsep=2pt]
+\item \textbf{RQ1.} Can a structured HLD provide enough information to generate a first deployable SME network without manual re-entry into another intent model?
+\item \textbf{RQ2.} How robust is the workflow across multiple HLDs, topology shapes, and vendor or technology constraints?
+\item \textbf{RQ3.} Where is human intervention still required, and is that intervention due to HLD ambiguity, missing constraints, or implementation limitations?
+\item \textbf{RQ4.} To what extent are the results dependent on a specific model, toolchain, or vendor backend?
+\end{itemize}
+
+\subsection{Experimental Setup}
+
+\begin{itemize}[leftmargin=*,noitemsep,topsep=2pt]
+\item Target domain: small and medium enterprise networks.
+\item Validation environment: Containerlab or another comparable digital-twin infrastructure \cite{}.
+\item Multiple vendor profiles:
+for example software routers, Linux-based network functions, and model-driven platforms.
+\item Reproducible pipeline execution from the same HLD input to the same expected artefacts and validation checks.
+\end{itemize}
+
+\subsection{Scenario Corpus}
+
+\begin{itemize}[leftmargin=*,noitemsep,topsep=2pt]
+\item A corpus of roughly ten HLDs with increasing complexity:
+single site, multi-site, DMZ exposure, guest access, service segmentation, redundancy, and vendor heterogeneity.
+\item Mix of synthetic and, when available, industrially inspired HLDs.
+\item Optional stress cases:
+underspecified HLD, conflicting constraints, unsupported vendor feature, and closed-vendor documentation dependency.
+\end{itemize}
+
+\subsection{Metrics}
+
+\begin{itemize}[leftmargin=*,noitemsep,topsep=2pt]
+\item End-to-end success rate per HLD.
+\item Number of manual interventions per scenario and their causes.
+\item Time to first validated network realization.
+\item Coverage of HLD elements successfully translated into deployment artefacts.
+\item Validation pass rate:
+connectivity, segmentation, reachability, and service tests.
+\item Reproducibility across repeated runs.
+\item Optional cost indicators:
+tokens, latency, and model dependence when an LLM-assisted component is enabled.
+\end{itemize}
+
+\subsection{Comparative and Ablation Angles}
+
+\begin{itemize}[leftmargin=*,noitemsep,topsep=2pt]
+\item Compare structured-HLD input with less structured variants to quantify the value of formalization.
+\item Compare one combined input file against a split HLD-plus-constraints organization.
+\item Compare validation-only digital-twin execution against a path that targets a more realistic deployment backend.
+\item Ablate optional components such as memory support or different orchestration strategies to show what is essential to the core claim.
+\end{itemize}
+
+\section{Discussion}
+
+\subsection{Scientific Positioning}
+
+\begin{itemize}[leftmargin=*,noitemsep,topsep=2pt]
+\item The paper should explicitly state that it is \emph{not} a full replacement for operational IBN.
+\item Instead, it introduces a preceding phase:
+design-time intent realization, or ``Intent Zero'', which prepares a network before classical assurance and operations begin.
+\item This clarifies the apparent tension raised by the draft title:
+the system is IBN-inspired and RFC-grounded, but it operates earlier in the lifecycle than most existing IBN work.
+\end{itemize}
+
+\subsection{Limits and Threats to Validity}
+
+\begin{itemize}[leftmargin=*,noitemsep,topsep=2pt]
+\item Results may depend on the structure and quality of the HLD itself.
+\item A lab or digital twin remains a proxy for production infrastructure, even if it is useful for pre-deployment validation.
+\item Vendor closedness, missing YANG or API models, and incomplete documentation may require extra human intervention.
+\item The chosen orchestration architecture may influence engineering efficiency without changing the main scientific claim.
+\end{itemize}
+
+\subsection{Implications}
+
+\begin{itemize}[leftmargin=*,noitemsep,topsep=2pt]
+\item For IBN research:
+intent should be studied not only as an operational abstraction, but also as a design-time artefact.
+\item For practitioners:
+a disciplined HLD format may reduce the cost of moving from architecture to implementation.
+\item For future work:
+the same framework could later be extended toward an operational IBN loop, continuous assurance, and design updates after deployment.
+\end{itemize}
+
+\section{Conclusion}
+
+\begin{itemize}[leftmargin=*,noitemsep,topsep=2pt]
+\item This paper draft positions the HLD as the earliest explicit source of network intent.
+\item The main message is that the gap between design and deployment can be framed as an IBN problem, not only as a documentation or automation problem.
+\item The proposed workflow aims to transform a structured HLD into a first validated network realization for SME environments.
+\item The next steps are to finalize the HLD formalization choice, complete the experimental campaign across multiple HLDs, and sharpen the discussion on coexistence with later operational IBN loops.
+\end{itemize}
+
+% TODO later:
+% - refine title after deciding whether "Intent Zero" remains in the paper
+% - add Figure 1 (positioning in the network lifecycle)
+% - add Figure 2 (workflow from HLD to as-built)
+% - decide whether a small related-work table is worth the page cost
+% - replace all \cite{} placeholders with actual entries
+% - re-enable BibTeX once real citation keys are available
+
+\section*{References}
+References will be added after the current \texttt{\string\cite\{\}} placeholders are replaced with actual keys.
+
+\end{document}
