@@ -25,9 +25,9 @@
 *.xdv
 
 # Generated PDFs for local TeX entrypoints
-/main.pdf
-/paper-CNSM26/paper_HLD_IBN_CNSM26.pdf
-/paper-CNSM26/sections/paper_HLD_IBN_CNSM26.pdf
+# /main.pdf
+# /paper-CNSM26/paper_HLD_IBN_CNSM26.pdf
+# /paper-CNSM26/sections/paper_HLD_IBN_CNSM26.pdf
 
 # Editor
 *.swp
