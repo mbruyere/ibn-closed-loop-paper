@@ -1,4 +1,77 @@
 
+@inproceedings {cai2026matryoshka,
+author = {Yan Cai and Jialong Li and Kutalmis Akpinar and Tianxiang Li and Hany Morsy and Jason Wilson and Sunil Khaunte and Yiting Xia and Ying Zhang},
+title = {Matryoshka: Realizing Hyperscale Data Center Network Design for the {AI} Era},
+booktitle = {23rd USENIX Symposium on Networked Systems Design and Implementation (NSDI 26)},
+year = {2026},
+isbn = {978-1-939133-54-0},
+address = {Renton, WA},
+pages = {2095--2110},
+url = {https://www.usenix.org/conference/nsdi26/presentation/cai},
+publisher = {USENIX Association},
+month = may
+}
+
+@article{clemm2020network,
+author = {Clemm, Alexander and Zhani, Mohamed Faten and Boutaba, Raouf},
+title = {Network Management 2030: Operations and Control of Network 2030 Services},
+year = {2020},
+issue_date = {Oct 2020},
+publisher = {Plenum Press},
+address = {USA},
+volume = {28},
+number = {4},
+issn = {1064-7570},
+url = {https://doi.org/10.1007/s10922-020-09517-0},
+doi = {10.1007/s10922-020-09517-0},
+abstract = {The networking landscape is expected to undergo profound changes over the course of the next decade. New network services are expected to emerge that will enable new applications such as the Tactile Internet, Holographic-Type Communications, or Tele-Driving. Many of these services will be characterized by very high degrees of precision with which end-to-end service levels must be supported. This will have profound implications on the management of those networks and services, from the need to support new methods for assurance of ultra-high-precision services to the need for new network programming models that will allow the industry to move beyond DevOps and SDN towards User-Defined Networking. This article analyzes those implications and provides an overview of challenges along with possible solution approaches and opportunities for research.},
+journal = {J. Netw. Syst. Manage.},
+month = oct,
+pages = {721–750},
+numpages = {30},
+keywords = {High precision networking, Intent, Service assurance, Network operations, Service management, Network programming models, BPP, New IP, Research challenges}
+}
+
+@article{drakopoulos1999enterprise,
+title = {Enterprise network planning and design: methodology and application},
+journal = {Computer Communications},
+volume = {22},
+number = {4},
+pages = {340-352},
+year = {1999},
+issn = {0140-3664},
+doi = {https://doi.org/10.1016/S0140-3664(98)00158-3},
+url = {https://www.sciencedirect.com/science/article/pii/S0140366498001583},
+author = {Elias Drakopoulos},
+keywords = {Network planning and design, Performance analysis, Frame relay},
+abstract = {The paper describes a business-driven enterprise network planning and design methodology that has an iterative structure to periodically assess, update, and extend the network architecture to support new business applications and requirements, account for changes in business direction, and analyze the implications of technology advances on business processes and functions. The paper focuses on the network infrastructure design and analysis task of the proposed methodology and discusses the network design and analysis of a multi-protocol application environment characterized by a client/server architecture, integration of legacy and distributed database structures, frame relay wide area network, and token ring local area networks. Detailed workload characterization and performance modeling of the application environment is presented, and network design issues are addressed. The model is used to study network performance under various load conditions, identify bottlenecks and compare design alternatives.}
+}
+
+@inproceedings {enck2007configuration,
+author = {William Enck and Patrick McDaniel and Subhabrata Sen and Panagiotis Sebos and Sylke Spoerel and Albert Greenberg and Sanjay Rao and William Aiello},
+title = {Configuration Management at Massive Scale: System Design and Experience },
+booktitle = {2007 USENIX Annual Technical Conference (USENIX ATC 07)},
+year = {2007},
+address = {Santa Clara, CA},
+url = {https://www.usenix.org/conference/2007-usenix-annual-technical-conference/configuration-management-massive-scale-system},
+publisher = {USENIX Association},
+month = jun
+}
+
+@INPROCEEDINGS{han2025networkcopilot,
+  author={Han, Rongxin and Wang, Jingyu and Sun, Haifeng and Jiang, Zengteng and Qi, Qi and Zhuang, Zirui and Zhang, Yuan and Liao, Jianxin},
+  booktitle={IEEE INFOCOM 2025 - IEEE Conference on Computer Communications}, 
+  title={Network CoPilot: Intent-Driven Network Configuration Updating for Service Guarantee}, 
+  year={2025},
+  volume={},
+  number={},
+  pages={1-10},
+  keywords={Network topology;Computational modeling;Natural languages;Semantics;Syntactics;Routing;Topology;Proposals;Mirrors;Faces;Intent-based network;Autonomous network;Network operation;Configuration updating;Language model},
+  doi={10.1109/INFOCOM55648.2025.11044495}}
+
+
+
+
 @inproceedings {jeffreyMALT20,  
 author = {Jeffrey C. Mogul and Drago Goricanec and Martin Pool and Anees Shaikh and Douglas Turk and Bikash Koley and Xiaoxue Zhao},  
 title = {Experiences with Modeling Network Topologies at Multiple Levels of Abstraction },  
@@ -11,6 +84,36 @@ url = {https://www.usenix.org/conference/nsdi20/presentation/mogul},
 publisher = {USENIX Association},  
 month = feb  
 }
+
+@inproceedings{mondal2025tackling,
+author = {Mondal, Rajdeep and Bjorner, Nikolaj and Millstein, Todd and Tang, Alan and Varghese, George},
+title = {Tackling Ambiguity in User Intent for LLM-based Network Configuration Synthesis},
+year = {2025},
+isbn = {9798400722806},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/3772356.3772402},
+doi = {10.1145/3772356.3772402},
+abstract = {Beyond hallucinations, another problem in program synthesis using LLMs is ambiguity in user intent. We illustrate the ambiguity problem in a networking context for LLM-based incremental configuration synthesis of route maps and ACLs. Configuration stanzas frequently overlap in header space, making the relative priority of actions impossible for the LLM to infer without user interaction. Measurements in a large cloud identify complex ACLs with 100s of overlaps, showing ambiguity is a real problem. We propose a prototype system, Clarify, augmenting an LLM with a new module called a Disambiguator that helps elicit user intent. On a small synthetic workload, Clarify incrementally synthesizes routing policies and interactively disambiguates user intent to ensure correctness.},
+booktitle = {Proceedings of the 24th ACM Workshop on Hot Topics in Networks},
+pages = {176–183},
+numpages = {8},
+keywords = {large language models (LLMs), network verification, network configuration synthesis, specification ambiguity, incremental program synthesis},
+location = {UMD Campus, College Park, MD, USA},
+series = {HotNets '25}
+}
+
+@INPROCEEDINGS{paul2025swift,
+  author={Alcock, Paul and Anand, Revika and Rotsos, Charalampos and Race, Nicholas},
+  booktitle={NOMS 2025-2025 IEEE Network Operations and Management Symposium}, 
+  title={SWIFT: Semantic Web Intent Framework for Intent Translation}, 
+  year={2025},
+  volume={},
+  number={},
+  pages={01-09},
+  keywords={Semantic Web;Translation;Runtime;Semantics;Ontologies;Data models;Planning;Logic;Telemetry;Optimization},
+  doi={10.1109/NOMS57970.2025.11073618}
+  }
 
 
 @misc{rfc9315,
@@ -28,6 +131,38 @@ month = feb
     abstract =  {Intent and Intent-Based Networking are taking the industry by storm. At the same time, terms related to Intent-Based Networking are often used loosely and inconsistently, in many cases overlapping and confused with other concepts such as "policy." This document clarifies the concept of "intent" and provides an overview of the functionality that is associated with it. The goal is to contribute towards a common and shared understanding of terms, concepts, and functionality that can be used as the foundation to guide further definition of associated research and engineering problems and their solutions. This document is a product of the IRTF Network Management Research Group (NMRG). It reflects the consensus of the research group, having received many detailed and positive reviews by research group participants. It is published for informational purposes.},
 }
 
+@misc{rfc9316,
+    series =    {Request for Comments},
+    number =    9316,
+    howpublished =  {RFC 9316},
+    publisher = {RFC Editor},
+    doi =       {10.17487/RFC9316},
+    url =       {https://www.rfc-editor.org/info/rfc9316},
+    author =    {Chen Li and Olga Havel and Adriana Olariu and Pedro Martinez-Julia and Jéferson Campos Nobre and Diego Lopez},
+    title =     {{Intent Classification}},
+    pagetotal = 35,
+    year =      2022,
+    month =     oct,
+    abstract =  {Intent is an abstract, high-level policy used to operate a network. An intent-based management system includes an interface for users to input requests and an engine to translate the intents into the network configuration and manage their life cycle. This document mostly discusses the concept of network intents, but other types of intents are also considered. Specifically, this document highlights stakeholder perspectives of intent, methods to classify and encode intent, and the associated intent taxonomy; it also defines relevant intent terms where necessary, provides a foundation for intent-related research, and facilitates solution development. This document is a product of the IRTF Network Management Research Group (NMRG).},
+}
+
+@inproceedings{sung2008towards,
+author = {Sung, Yu-Wei Eric and Rao, Sanjay G. and Xie, Geoffrey G. and Maltz, David A.},
+title = {Towards systematic design of enterprise networks},
+year = {2008},
+isbn = {9781605582108},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/1544012.1544034},
+doi = {10.1145/1544012.1544034},
+abstract = {Enterprise networks are important, with size and complexity even surpassing carrier networks. Yet, the design of enterprise networks is ad-hoc and poorly understood. In this paper, we show how a systematic design approach can handle two key areas of enterprise design: virtual local area networks (VLANs) and reachability control. We focus on these tasks given their complexity, prevalence, and time-consuming nature. Our contributions are three-fold. First, we show how these design tasks may be formulated in terms of network-wide performance, security, and resilience requirements. Our formulations capture the correctness and feasibility constraints on the design, and they model each task as one of optimizing desired criteria subject to the constraints. The optimization criteria may further be customized to meet operator-preferred design strategies. Second, we develop a set of algorithms to solve the problems that we formulate. Third, we demonstrate the feasibility and value of our systematic design approach through validation on a large-scale campus network with hundreds of routers and VLANs.},
+booktitle = {Proceedings of the 2008 ACM CoNEXT Conference},
+articleno = {22},
+numpages = {12},
+location = {Madrid, Spain},
+series = {CoNEXT '08}
+}
+
 @misc{tran2025multiagentcollaborationmechanismssurvey,
       title={Multi-Agent Collaboration Mechanisms: A Survey of LLMs}, 
       author={Khanh-Tung Tran and Dung Dao and Minh-Duong Nguyen and Quoc-Viet Pham and Barry O'Sullivan and Hoang D. Nguyen},
@@ -36,4 +171,41 @@ month = feb
       archivePrefix={arXiv},
       primaryClass={cs.AI},
       url={https://arxiv.org/abs/2501.06322}, 
+}
+
+@article{wang2024netconfeval,
+author = {Wang, Changjie and Scazzariello, Mariano and Farshin, Alireza and Ferlin, Simone and Kosti\'{c}, Dejan and Chiesa, Marco},
+title = {NetConfEval: Can LLMs Facilitate Network Configuration?},
+year = {2024},
+issue_date = {June 2024},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+volume = {2},
+number = {CoNEXT2},
+url = {https://doi.org/10.1145/3656296},
+doi = {10.1145/3656296},
+abstract = {This paper explores opportunities to utilize Large Language Models (LLMs) to make network configuration human-friendly, simplifying the configuration of network devices \& development of routing algorithms and minimizing errors. We design a set of benchmarks (NetConfEval) to examine the effectiveness of different models in facilitating and automating network configuration. More specifically, we focus on the scenarios where LLMs translate high-level policies, requirements, and descriptions (i.e., specified in natural language) into low-level network configurations \& Python code. NetConfEval considers four tasks that could potentially facilitate network configuration, such as (i) generating high-level requirements into a formal specification format, (ii) generating API/function calls from high-level requirements, (iii) developing routing algorithms based on high-level descriptions, and (iv) generating low-level configuration for existing and new protocols based on input documentation. Learning from the results of our study, we propose a set of principles to design LLM-based systems to configure networks. Finally, we present two GPT-4-based prototypes to (i) automatically configure P4-enabled devices from a set of high-level requirements and (ii) integrate LLMs into existing network synthesizers.},
+journal = {Proc. ACM Netw.},
+month = jun,
+articleno = {7},
+numpages = {25},
+keywords = {benchmark, code generation, function calling, large language models (llms), network configuration, network synthesizer, p4, rag, routing algorithms}
+}
+
+@inproceedings{wang2025intentdrivennetwork,
+author = {Wang, Zhaodong and Lin, Samuel and Yan, Guanqing and Ghorbani, Soudeh and Yu, Minlan and Zhou, Jiawei and Hu, Nathan and Baruah, Lopa and Peters, Sam and Kamath, Srikanth and Yang, Jerry and Zhang, Ying},
+title = {Intent-Driven Network Management with Multi-Agent LLMs: The Confucius Framework},
+year = {2025},
+isbn = {9798400715242},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/3718958.3750537},
+doi = {10.1145/3718958.3750537},
+abstract = {Advancements in Large Language Models (LLMs) are significantly transforming network management practices. In this paper, we present our experience developing Confucius, a multi-agent framework for network management at Meta. We model network management workflows as directed acyclic graphs (DAGs) to aid planning. Our framework integrates LLMs with existing management tools to achieve seamless operational integration, employs retrieval-augmented generation (RAG) to improve long-term memory, and establishes a set of primitives to systematically support human/model interaction. To ensure the accuracy of critical network operations, Confucius closely integrates with existing network validation methods and incorporates its own validation framework to prevent regressions. Remarkably, Confucius is a production-ready LLM development framework that has been operational for two years, with over 60 applications onboarded. To our knowledge, this is the first report on employing multi-agent LLMs for hyper-scale networks.},
+booktitle = {Proceedings of the ACM SIGCOMM 2025 Conference},
+pages = {347–362},
+numpages = {16},
+keywords = {large language models (LLMs), RAG, network planning},
+location = {S\~{a}o Francisco Convent, Coimbra, Portugal},
+series = {SIGCOMM '25}
 }

@@ -5,6 +5,16 @@ Tags:
 
 # Overview
 
+
+## Version actuelle du papier
+Points d’ancrage principaux:
+
+- fondations IBN: rfc9315, rfc9316
+- design/planning: clemm2020network, drakopoulos1999enterprise, sung2008towards
+- abstraction / matérialisation: jeffreyMALT20, cai2026matryoshka, enck2007configuration, paul2025swift
+- agentic / LLM: wang2024netconfeval, han2025networkcopilot, wang2025intentdrivennetwork, mondal2025tackling
+
+
 ## CNSM
 
 - CNSM'26 Focus : Evolving Network and Service Management: From Automation to Agentic Intelligence.
